@@ -1,0 +1,67 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace "com.example.logger"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.example.logger"   // PASTRAT (acelasi SHA-1 OAuth) pana terminam testele
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName "2.0.0"
+
+        buildConfigField "String", "SERVER_URL", "\"https://noze.ro\""
+        buildConfigField "String", "GOOGLE_WEB_CLIENT_ID",
+            "\"784597486644-50hoi1h5rsad4ano9cuf93mf9gtki365.apps.googleusercontent.com\""
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    // Acelasi keystore ca sensor-audio-gps => acelasi SHA-1 => OAuth Google merge fara re-inregistrare
+    signingConfigs {
+        debug {
+            storeFile file("bioecho-debug.keystore")
+            storePassword "bioecho2026"
+            keyAlias "bioecho"
+            keyPassword "bioecho2026"
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    lint {
+        abortOnError false   // build de dezvoltare — avertismentele lint nu opresc build-ul
+    }
+}
+
+dependencies {
+    implementation "androidx.core:core-ktx:1.12.0"
+    implementation "androidx.appcompat:appcompat:1.6.1"
+    // WebViewCompat.addDocumentStartJavaScript (injecteaza bridge-ul inainte de scripturile modulului)
+    implementation "androidx.webkit:webkit:1.11.0"
+    // GPS nativ (FusedLocationProviderClient) pentru bridge-ul `location`
+    implementation "com.google.android.gms:play-services-location:21.3.0"
+}
