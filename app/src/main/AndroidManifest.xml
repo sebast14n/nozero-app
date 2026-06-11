@@ -1,11 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission android:name="android.permission.INTERNET"/>
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
-    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
+    <!-- inregistrarile in folder public /BioEcho/ ca sa supravietuiasca dezinstalarii (Android 11+) -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
+    <!-- anti-furt: stare SIM (optional) -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
+    <!-- anti-intruziune BLE (neverForLocation => fara permisiune locatie pt BT pe Android 12+) -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"/>
+    <!-- auto-update: instalare APK -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
 
     <application
@@ -16,16 +35,22 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
 
+        <!-- hub nativ (butoanele de teren) = ecranul principal -->
         <activity
             android:name=".MainActivity"
-            android:exported="true"
-            android:launchMode="singleTask"
-            android:configChanges="orientation|screenSize|keyboardHidden">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- intoarcerea din OAuth-ul Google (browser) → nozero://auth?token=<JWT> -->
+        </activity>
+
+        <!-- fereastra web (harta /app + login /device-login) + deep link de la Google OAuth -->
+        <activity
+            android:name=".WebActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
@@ -33,6 +58,32 @@
                 <data android:scheme="nozero" android:host="auth"/>
             </intent-filter>
         </activity>
+
+        <activity android:name=".QrScanActivity" android:exported="false"/>
+        <activity android:name=".CompassActivity" android:exported="false" android:screenOrientation="portrait"/>
+        <activity android:name=".MapActivity" android:exported="false"/>
+        <activity android:name=".PoisListActivity" android:exported="false" android:label="Puncte de interes"/>
+        <activity android:name=".FindSensorActivity" android:exported="false" android:label="Găsește senzorul"/>
+        <activity android:name=".DiagnosticActivity" android:exported="false" android:label="Diagnostic"/>
+        <activity android:name=".PlaybackActivity" android:exported="false" android:label="Redare"/>
+        <activity android:name=".RecordingsActivity" android:exported="false" android:label="Înregistrări"/>
+        <activity android:name=".LiveListenActivity" android:exported="false" android:label="Ascultă live"/>
+
+        <service
+            android:name=".RecordingService"
+            android:foregroundServiceType="microphone|location"
+            android:exported="false"/>
+
+        <receiver android:name=".InstallReceiver" android:exported="false"/>
+        <receiver
+            android:name=".BioEchoDeviceAdminReceiver"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data android:name="android.app.device_admin" android:resource="@xml/device_admin"/>
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED"/>
+            </intent-filter>
+        </receiver>
 
     </application>
 

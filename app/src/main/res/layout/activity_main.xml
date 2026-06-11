@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center_horizontal"
+    android:padding="24dp"
+    android:background="#121212">
+
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="⚪  Oprit"
+        android:textSize="22sp"
+        android:textColor="#FFFFFF"
+        android:layout_marginBottom="24dp"/>
+
+    <!-- STOP: vizibil doar in timpul inregistrarii -->
+    <Button
+        android:id="@+id/btnStartStop"
+        android:layout_width="160dp"
+        android:layout_height="160dp"
+        android:text="⏹  STOP"
+        android:textSize="18sp"
+        android:textColor="#FFFFFF"
+        android:visibility="gone"
+        android:layout_marginBottom="16dp"/>
+
+    <!-- Traseu pe harta: vizibil doar in timpul unui TRANSECT activ -->
+    <Button
+        android:id="@+id/btnTrackMap"
+        android:layout_width="250dp"
+        android:layout_height="52dp"
+        android:text="🗺  TRASEU PE HARTĂ"
+        android:textSize="15sp"
+        android:textColor="#FFFFFF"
+        android:backgroundTint="#00695C"
+        android:visibility="gone"
+        android:layout_marginBottom="32dp"/>
+
+    <!-- Doua butoane de pornire: vizibile cand NU se inregistreaza -->
+    <LinearLayout
+        android:id="@+id/startButtonsRow"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:layout_marginBottom="32dp">
+
+        <Button
+            android:id="@+id/btnTransect"
+            android:layout_width="250dp"
+            android:layout_height="68dp"
+            android:text="🚶  TRANSECT"
+            android:textSize="17sp"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#43A047"
+            android:layout_marginBottom="16dp"/>
+
+        <Button
+            android:id="@+id/btnFixedSensor"
+            android:layout_width="250dp"
+            android:layout_height="68dp"
+            android:text="📍  SENZOR FIX"
+            android:textSize="17sp"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#1E88E5"/>
+
+        <Button
+            android:id="@+id/btnLiveListen"
+            android:layout_width="250dp"
+            android:layout_height="56dp"
+            android:text="🎤  ASCULTĂ LIVE (PĂSĂRI)"
+            android:textSize="14sp"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#00897B"
+            android:layout_marginTop="16dp"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:layout_marginBottom="8dp">
+
+        <Button
+            android:id="@+id/btnAuth"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:text="🔑 AUTENTIFICARE"
+            android:textSize="14sp"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#4285F4"/>
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:layout_marginBottom="12dp">
+
+        <Button
+            android:id="@+id/btnCompass"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:text="🧭 BUSOLĂ"
+            android:textSize="14sp"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#2E7D32"
+            android:layout_marginEnd="8dp"/>
+
+        <Button
+            android:id="@+id/btnRecordings"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:text="🗂 ÎNREGISTRĂRI"
+            android:textSize="12sp"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#37474F"/>
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:layout_marginBottom="12dp">
+
+        <Button
+            android:id="@+id/btnFindSensor"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:text="🔎 GĂSEȘTE (BLE)"
+            android:textSize="13sp"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#6A1B9A"
+            android:layout_marginEnd="8dp"/>
+
+        <Button
+            android:id="@+id/btnDiagnostic"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:text="🔧 DIAGNOSTIC"
+            android:textSize="13sp"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#455A64"/>
+
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tvUploadStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:textSize="12sp"
+        android:textColor="#90CAF9"
+        android:gravity="center"
+        android:lineSpacingExtra="3dp"
+        android:layout_marginBottom="16dp"/>
+
+    <TextView
+        android:id="@+id/tvPath"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:textSize="10sp"
+        android:textColor="#555555"
+        android:gravity="center"
+        android:lineSpacingExtra="3dp"/>
+
+</LinearLayout>
