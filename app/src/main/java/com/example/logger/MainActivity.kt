@@ -77,10 +77,25 @@ class MainActivity : AppCompatActivity() {
                 resultMsg.sendToTarget()
                 return true
             }
+            // camera pentru scannerul QR din /device-login (login senzor)
+            override fun onPermissionRequest(request: android.webkit.PermissionRequest) {
+                runOnUiThread { request.grant(request.resources) }
+            }
+            // my-location (navigator.geolocation) pe noze.ro
+            override fun onGeolocationPermissionsShowPrompt(origin: String, callback: android.webkit.GeolocationPermissions.Callback) {
+                callback.invoke(origin, true, false)
+            }
         }
 
-        ensureLocationPermission()
-        web.loadUrl(moduleUrl("transect"))
+        ensurePermissions()
+        web.loadUrl(startUrl())
+    }
+
+    private fun startUrl(): String {
+        // logat (cookie nozero_token) → harta /app; altfel → conectare de teren (Google sau QR senzor)
+        val ck = android.webkit.CookieManager.getInstance().getCookie(BuildConfig.SERVER_URL)
+        val authed = ck?.contains("nozero_token=") == true
+        return BuildConfig.SERVER_URL + if (authed) "/app" else "/device-login"
     }
 
     private fun isExternal(url: String): Boolean {
@@ -93,16 +108,16 @@ class MainActivity : AppCompatActivity() {
         try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (e: Exception) { /* ignor */ }
     }
 
-    private fun ensureLocationPermission() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
-                1
-            )
+    private fun ensurePermissions() {
+        val need = mutableListOf<String>()
+        for (p in arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.CAMERA   // scanner QR senzor (in WebView, /device-login)
+        )) {
+            if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) need.add(p)
         }
+        if (need.isNotEmpty()) ActivityCompat.requestPermissions(this, need.toTypedArray(), 1)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
