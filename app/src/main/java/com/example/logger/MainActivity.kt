@@ -221,15 +221,21 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, "Deconectat.", Toast.LENGTH_SHORT).show()
                     updateAuthButton(); verifyMobileAuth()
                 }
+                .setNeutralButton("🗺 Hartă") { _, _ ->
+                    startActivity(Intent(this, WebActivity::class.java)
+                        .putExtra("url", BuildConfig.SERVER_URL + "/app"))
+                }
                 .setNegativeButton("Închide", null)
                 .show()
         } else {
             AlertDialog.Builder(this)
                 .setTitle("Autentificare")
-                .setItems(arrayOf("🅖  Cu Google", "📷  Cu cod QR", "🔑  Cu token (avansat)",
+                .setItems(arrayOf("🌐  Conectare (Google / web)", "📷  Cu cod QR", "🔑  Cu token (avansat)",
                                   "📟  Provizionează ca senzor (scan QR)")) { _, which ->
                     when (which) {
-                        0 -> doGoogleLogin()
+                        // login NOU: pagina web (Google prin browser deep-link SAU scanare QR senzor)
+                        0 -> startActivity(Intent(this, WebActivity::class.java)
+                                .putExtra("url", BuildConfig.SERVER_URL + "/device-login"))
                         1 -> startActivityForResult(Intent(this, QrScanActivity::class.java), 300)
                         2 -> showTokenDialog()
                         3 -> startActivity(Intent(this, QrScanActivity::class.java))  // QR senzor -> device_token

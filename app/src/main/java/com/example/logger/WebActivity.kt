@@ -101,9 +101,9 @@ class WebActivity : AppCompatActivity() {
                 val cm = android.webkit.CookieManager.getInstance()
                 cm.setCookie(BuildConfig.SERVER_URL, "nozero_token=$token; path=/; secure")
                 cm.flush()
-                // pune tokenul si in prefs ca sa-l foloseasca uploadul/C&C nativ (Bearer)
+                // pune tokenul in prefs ca jwt_token (cheia pe care o citesc UploadManager/AntiTheft/etc.)
                 getSharedPreferences("bioecho_prefs", MODE_PRIVATE).edit()
-                    .putString("nz_token", token).apply()
+                    .putString("jwt_token", token).apply()
                 web.loadUrl(BuildConfig.SERVER_URL + "/app")
                 return true
             }
