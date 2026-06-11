@@ -59,6 +59,12 @@ class MainActivity : AppCompatActivity() {
         web.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, req: WebResourceRequest): Boolean {
                 val url = req.url.toString()
+                // Google NU permite OAuth in WebView → il deschidem in browser cu ?app=1;
+                // tokenul revine prin deep link nozero://auth (handleAuthDeepLink) → cookie → /app
+                if (url.startsWith(BuildConfig.SERVER_URL + "/api/auth/login")) {
+                    openExternal(BuildConfig.SERVER_URL + "/api/auth/login?app=1&prompt=select_account")
+                    return true
+                }
                 if (isExternal(url)) { openExternal(url); return true }
                 return false
             }
@@ -88,7 +94,30 @@ class MainActivity : AppCompatActivity() {
         }
 
         ensurePermissions()
-        web.loadUrl(startUrl())
+        if (!handleAuthDeepLink(intent)) web.loadUrl(startUrl())
+    }
+
+    // app deschis din nou de pe deep link-ul nozero://auth (dupa Google OAuth in browser)
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleAuthDeepLink(intent)
+    }
+
+    /** Prinde nozero://auth?token=<JWT> (intors de OAuth-ul Google din browser): pune cookie-ul + deschide /app. */
+    private fun handleAuthDeepLink(intent: Intent?): Boolean {
+        val data = intent?.data ?: return false
+        if (data.scheme == "nozero" && data.host == "auth") {
+            val token = data.getQueryParameter("token")
+            if (!token.isNullOrEmpty()) {
+                val cm = android.webkit.CookieManager.getInstance()
+                cm.setCookie(BuildConfig.SERVER_URL, "nozero_token=$token; path=/; secure")
+                cm.flush()
+                web.loadUrl(BuildConfig.SERVER_URL + "/app")
+                return true
+            }
+        }
+        return false
     }
 
     private fun startUrl(): String {
