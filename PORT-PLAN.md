@@ -60,8 +60,22 @@ fiecare fază = un release buildabil pe care îl testează Sebastian. Build-ul A
 4. **Curățenie:** scoate GoogleLogin.kt + credentials deps dacă nimic nu le mai cere; verifică
    versionCode > orice instalat; testează pe telefon (Sebastian).
 
-## Stare
-- [ ] Faza 1 (base-swap + green) — ÎN CURS
-- [ ] Faza 2 (login cablat)
-- [ ] Faza 3 (rewire auth)
-- [ ] Faza 4 (curățenie + test)
+## Stare (2026-06-11)
+- [x] **Faza 1 (base-swap)** — BUILD VERDE. Toate cele 24 .kt + res + manifest + deps compilează sub
+  `ro.noze.app` (versionCode 5 / 2.4.0). `MainActivity` = hub vechi; `WebActivity` = WebView nou.
+- [x] **Faza 2 (login cablat)** — `showAuthMenu` opțiunea 0 „Conectare (Google / web)" → `WebActivity`
+  `/device-login` (Google deep-link `nozero://auth` SAU scanare QR web). Meniu cont → buton „🗺 Hartă" →
+  `WebActivity` `/app`. Opțiunile 1/3 (QR nativ → `device_token`) + 2 (token) rămân.
+- [x] **Faza 3 (jwt_token aliniat)** — `WebActivity.handleAuthDeepLink` salvează `jwt_token` (cheia citită de
+  `UploadManager`/`AntiTheftMonitor`/`MapActivity`/`verifyMobileAuth`) → upload + auth merg cu login-ul nou.
+- [ ] **Faza 4 (curățenie + test)** — de făcut: scoate `GoogleLogin.kt` + `doGoogleLogin()` nefolosite +
+  credentials deps; icon nou (acum = cel vechi BioEcho); **test pe teren (Sebastian)**.
+
+**RELEASE v2.4.0** = primul cu paritate completă + login nou.
+
+### Caveat-uri pt testul pe teren (Claude NU a putut testa pe telefon)
+- **Login personal:** „Autentificare" → „Conectare (Google / web)" → Google (browser revine în app) sau QR.
+- **Senzor + C&C:** „Autentificare" → „Provizionează ca senzor (scan QR)" (nativ) → setează `device_token`
+  (nzdev_) — necesar pt heartbeat-ul C&C (login-ul web QR setează doar `jwt_token`, NU `device_token`).
+- **Recording / anti-furt / live-listen / navigație** = cod vechi proven, dar reverifică pe teren.
+- Icon = temporar cel vechi (BioEcho); de înlocuit în faza 4.

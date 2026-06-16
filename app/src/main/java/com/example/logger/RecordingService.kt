@@ -63,7 +63,7 @@ class RecordingService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var antiTheft: AntiTheftMonitor? = null
     private var batteryTimer: Timer? = null
-    private var cmdTimer: Timer? = null            // C&C: poll comenzi la 15 min (senzor fix)
+    private var cmdTimer: Timer? = null            // C&C: poll comenzi la 1 min (senzor fix)
     @Volatile private var forcedRecording = false  // record_now -> inregistreaza si in afara ferestrei
     private val isoUtc = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).also {
         it.timeZone = TimeZone.getTimeZone("UTC")
@@ -366,7 +366,7 @@ class RecordingService : Service() {
         cmdTimer = Timer().also {
             it.scheduleAtFixedRate(object : TimerTask() {
                 override fun run() { try { commandCycle() } catch (_: Exception) {} }
-            }, 30_000L, 3 * 60 * 1000L)   // primul ciclu la 30s, apoi la 3 min
+            }, 30_000L, 60 * 1000L)   // primul ciclu la 30s, apoi la 1 min
         }
     }
 
