@@ -52,6 +52,7 @@ class MapActivity : AppCompatActivity() {
     private var lastLocation: Location? = null
     private var pickMode = false
     private var trackMode = false
+    private var followMe = false   // track_mode: harta urmareste pozitia curenta pana cand userul misca harta
     private var trackLine: Polyline? = null
     private val trackHandler = Handler(Looper.getMainLooper())
     private val trackRefresh = object : Runnable {
@@ -95,7 +96,13 @@ class MapActivity : AppCompatActivity() {
         } else if (trackMode) {
             btnCompassFromMap.text = "📍 Eu"
             btnPrecache.text = "🛰 Cache 1km"
+            followMe = true
+            mapView.setOnTouchListener { _, ev ->
+                if (ev.action == android.view.MotionEvent.ACTION_DOWN) followMe = false   // userul a miscat harta -> nu mai forta centrarea
+                false
+            }
             btnCompassFromMap.setOnClickListener {
+                followMe = true
                 (myLocationOverlay.myLocation ?: lastLocation?.let { GeoPoint(it.latitude, it.longitude) })
                     ?.let { mapView.controller.animateTo(it) }
             }
@@ -139,6 +146,7 @@ class MapActivity : AppCompatActivity() {
             }
             val lenStr = if (len >= 1000) "%.2f km".format(len / 1000) else "%.0f m".format(len)
             tvDistance.text = "🚶 Traseu: $lenStr · ${pts.size} pct"
+            if (followMe) mapView.controller.animateTo(pts.last())   // auto-centrare pe pozitia curenta
         }
         mapView.invalidate()
       } catch (e: Exception) { /* nu lasa harta sa crape din desenarea traseului */ }

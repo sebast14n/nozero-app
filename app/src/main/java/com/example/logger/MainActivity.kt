@@ -852,6 +852,8 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(i)
         else startService(i)
         updateUI(true)
+        // Transect: deschide automat harta live ca sa urmaresti traseul in timp real
+        if (!isFixedPoint) startActivity(Intent(this, MapActivity::class.java).putExtra("track_mode", true))
     }
 
     private fun stopRecording() {
