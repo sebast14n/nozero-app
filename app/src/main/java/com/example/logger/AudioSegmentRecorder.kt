@@ -11,9 +11,10 @@ import java.io.FileOutputStream
 import java.io.RandomAccessFile
 
 /**
- * Captura unui segment audio LOSSLESS din microfon via AudioRecord (PCM 16-bit, sursa UNPROCESSED).
+ * Captura unui segment audio LOSSLESS din microfon via AudioRecord (32-bit FLOAT cu fallback la
+ * 16-bit, sursa UNPROCESSED). Float-ul pastreaza sunetele slabe de noapte fara cuantizare/clipping.
  *
- * - WAV (implicit): scriere directa a PCM + header WAV — 100% fiabil, identic cu Song Meter.
+ * - WAV (implicit): scriere directa a PCM/float + header WAV — 100% fiabil, identic cu Song Meter.
  * - FLAC (experimental): PCM -> encoder MediaCodec "audio/flac" -> fisier .flac (header din CSD).
  *   Daca encoderul FLAC nu poate fi pornit pe dispozitiv, cade automat pe WAV (nu se pierde nimic).
  *
@@ -23,32 +24,37 @@ class AudioSegmentRecorder(
     private val sampleRate: Int = 48000,
     private val channels: Int = 1,
     private val preferFlac: Boolean = false,
+    private val preferFloat: Boolean = false,   // 32-bit float OPT-IN (default 16-bit; podeaua e analogica, nu cuantizare)
 ) {
     @Volatile private var running = false
     private var thread: Thread? = null
     private var ar: AudioRecord? = null
+    private var bytesPerSample = 2          // 2 = PCM 16-bit, 4 = float 32-bit
+    private var isFloat = false             // true cand inregistram pe 32-bit float (WAV)
     var outFile: File? = null; private set
 
     /** Porneste captura. Intoarce fisierul efectiv scris (.flac sau .wav), sau null la esec. */
     fun start(baseNoExt: File): File? {
         val chMask = if (channels == 2) AudioFormat.CHANNEL_IN_STEREO else AudioFormat.CHANNEL_IN_MONO
-        val minBuf = AudioRecord.getMinBufferSize(sampleRate, chMask, AudioFormat.ENCODING_PCM_16BIT)
-        if (minBuf <= 0) return null
-        val source = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
+        val unp = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
             MediaRecorder.AudioSource.UNPROCESSED else MediaRecorder.AudioSource.MIC
-        val rec = try {
-            AudioRecord(source, sampleRate, chMask, AudioFormat.ENCODING_PCM_16BIT, minBuf * 4)
-        } catch (e: Exception) { null }
-        // fallback la MIC daca UNPROCESSED nu se initializeaza
-        ar = if (rec != null && rec.state == AudioRecord.STATE_INITIALIZED) rec else {
-            try { rec?.release() } catch (_: Exception) {}
-            try {
-                AudioRecord(MediaRecorder.AudioSource.MIC, sampleRate, chMask,
-                    AudioFormat.ENCODING_PCM_16BIT, minBuf * 4)
-            } catch (e: Exception) { null }
+        // WAV: preferam 32-bit FLOAT — gama dinamica mare, sunetele slabe de noapte nu mai cad in
+        // podeaua de cuantizare a 16-bit (si fara clipping pe sunetele tari). FLAC (experimental)
+        // ramane pe 16-bit (encoderul cere int). Ordine fallback:
+        // float/UNPROCESSED -> float/MIC -> 16bit/UNPROCESSED -> 16bit/MIC.
+        var rec: AudioRecord? = null
+        if (preferFloat && !preferFlac && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            rec = makeRecord(AudioFormat.ENCODING_PCM_FLOAT, unp, chMask)
+                ?: makeRecord(AudioFormat.ENCODING_PCM_FLOAT, MediaRecorder.AudioSource.MIC, chMask)
+            if (rec != null) { isFloat = true; bytesPerSample = 4 }
         }
-        val a = ar ?: return null
-        if (a.state != AudioRecord.STATE_INITIALIZED) { try { a.release() } catch (_: Exception) {}; ar = null; return null }
+        if (rec == null) {
+            rec = makeRecord(AudioFormat.ENCODING_PCM_16BIT, unp, chMask)
+                ?: makeRecord(AudioFormat.ENCODING_PCM_16BIT, MediaRecorder.AudioSource.MIC, chMask)
+            isFloat = false; bytesPerSample = 2
+        }
+        ar = rec
+        val a = ar ?: return null   // makeRecord intoarce doar instante INITIALIZED
 
         // pregateste encoderul FLAC daca e cerut; altfel WAV
         val codec = if (preferFlac) tryCreateFlac() else null
@@ -75,16 +81,47 @@ class AudioSegmentRecorder(
         ar = null
     }
 
+    /** Creeaza un AudioRecord cu encoding+sursa date; intoarce-l doar daca s-a INITIALIZAT, altfel null. */
+    private fun makeRecord(enc: Int, src: Int, chMask: Int): AudioRecord? {
+        return try {
+            val mb = AudioRecord.getMinBufferSize(sampleRate, chMask, enc)
+            if (mb <= 0) return null
+            val r = AudioRecord(src, sampleRate, chMask, enc, mb * 4)
+            if (r.state == AudioRecord.STATE_INITIALIZED) r
+            else { try { r.release() } catch (_: Exception) {}; null }
+        } catch (e: Exception) { null }
+    }
+
     // ── WAV ──
     private fun runWav(a: AudioRecord, file: File, readChunk: Int) {
         val raf = try { RandomAccessFile(file, "rw") } catch (e: Exception) { return }
         try {
             writeWavHeader(raf, 0)         // placeholder, patch la final
-            val buf = ByteArray(readChunk)
             var dataLen = 0L
-            while (running) {
-                val n = a.read(buf, 0, buf.size)
-                if (n > 0) { raf.write(buf, 0, n); dataLen += n }
+            if (isFloat) {
+                // citim float-uri si le scriem ca IEEE float32 little-endian (corect pe orice device)
+                val fbuf = FloatArray(readChunk / 4)
+                val bytes = ByteArray(readChunk)
+                while (running) {
+                    val n = a.read(fbuf, 0, fbuf.size, AudioRecord.READ_BLOCKING)
+                    if (n > 0) {
+                        var bi = 0
+                        for (i in 0 until n) {
+                            val v = java.lang.Float.floatToIntBits(fbuf[i])
+                            bytes[bi++] = (v and 0xff).toByte()
+                            bytes[bi++] = ((v ushr 8) and 0xff).toByte()
+                            bytes[bi++] = ((v ushr 16) and 0xff).toByte()
+                            bytes[bi++] = ((v ushr 24) and 0xff).toByte()
+                        }
+                        raf.write(bytes, 0, n * 4); dataLen += n * 4L
+                    }
+                }
+            } else {
+                val buf = ByteArray(readChunk)
+                while (running) {
+                    val n = a.read(buf, 0, buf.size)
+                    if (n > 0) { raf.write(buf, 0, n); dataLen += n }
+                }
             }
             // patch dimensiuni
             raf.seek(4);  writeIntLE(raf, (36 + dataLen).toInt())
@@ -94,12 +131,14 @@ class AudioSegmentRecorder(
     }
 
     private fun writeWavHeader(raf: RandomAccessFile, dataLen: Int) {
-        val byteRate = sampleRate * channels * 2
+        val fmtCode = if (isFloat) 3 else 1        // 3 = WAVE_FORMAT_IEEE_FLOAT, 1 = PCM
+        val bits = bytesPerSample * 8
+        val byteRate = sampleRate * channels * bytesPerSample
         raf.write("RIFF".toByteArray()); writeIntLE(raf, 36 + dataLen)
         raf.write("WAVE".toByteArray()); raf.write("fmt ".toByteArray())
-        writeIntLE(raf, 16); writeShortLE(raf, 1); writeShortLE(raf, channels)
+        writeIntLE(raf, 16); writeShortLE(raf, fmtCode); writeShortLE(raf, channels)
         writeIntLE(raf, sampleRate); writeIntLE(raf, byteRate)
-        writeShortLE(raf, channels * 2); writeShortLE(raf, 16)
+        writeShortLE(raf, channels * bytesPerSample); writeShortLE(raf, bits)
         raf.write("data".toByteArray()); writeIntLE(raf, dataLen)
     }
 

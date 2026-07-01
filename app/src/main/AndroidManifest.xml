@@ -65,6 +65,7 @@
         <activity android:name=".PoisListActivity" android:exported="false" android:label="Puncte de interes"/>
         <activity android:name=".FindSensorActivity" android:exported="false" android:label="Găsește senzorul"/>
         <activity android:name=".DiagnosticActivity" android:exported="false" android:label="Diagnostic"/>
+        <activity android:name=".MicTestActivity" android:exported="false" android:label="Test microfoane"/>
         <activity android:name=".PlaybackActivity" android:exported="false" android:label="Redare"/>
         <activity android:name=".RecordingsActivity" android:exported="false" android:label="Înregistrări"/>
         <activity android:name=".LiveListenActivity" android:exported="false" android:label="Ascultă live"/>

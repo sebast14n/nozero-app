@@ -75,6 +75,10 @@ class DiagnosticActivity : AppCompatActivity() {
         }
         root.addView(micBar)
         micDb = small("nivel: —"); root.addView(micDb)
+        root.addView(Button(this).apply {
+            text = "🎙 Test comparativ microfoane →"
+            setOnClickListener { startActivity(Intent(this@DiagnosticActivity, MicTestActivity::class.java)) }
+        })
 
         // ── GPS ──
         root.addView(h2("📡 GPS"))
