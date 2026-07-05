@@ -42,27 +42,51 @@ class UploadManager(private val context: Context) {
 
     data class Org(val slug: String, val name: String)
 
+    /** Ultimul motiv pt care fetchOrgs a intors lista goala — pt un mesaj LIZIBIL in UI (nu toast). */
+    var lastFetchError: String? = null
+        private set
+
     /** Proiectele (tenants) in care e userul — pt selectorul „in ce proiect urci?".
      *  Sincron: a se apela pe thread de fundal. Citeste /api/auth/mobile-me. */
     fun fetchOrgs(): List<Org> {
-        val token = jwtToken ?: return emptyList()
+        lastFetchError = null
+        val token = jwtToken
+        if (token.isNullOrBlank()) {
+            lastFetchError = "Nu ești autentificat în aplicație. Loghează-te (scanează QR sau Google) pe pagina principală."
+            return emptyList()
+        }
         return try {
             val conn = (URL("$SERVER/api/auth/mobile-me").openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 setRequestProperty("Authorization", "Bearer $token")
                 connectTimeout = 15_000; readTimeout = 15_000
             }
-            if (conn.responseCode !in 200..299) return emptyList()
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                lastFetchError = if (code == 401)
+                    "Sesiune expirată (401). Reloghează-te pe pagina principală (QR / Google)."
+                else "Serverul a răspuns HTTP $code."
+                return emptyList()
+            }
             val body = conn.inputStream.bufferedReader().readText()
             val arr = Regex(""""organizations"\s*:\s*\[(.*?)]""", RegexOption.DOT_MATCHES_ALL)
-                .find(body)?.groupValues?.get(1) ?: return emptyList()
-            Regex("""\{[^}]*}""").findAll(arr).mapNotNull { m ->
+                .find(body)?.groupValues?.get(1)
+            if (arr == null) {
+                lastFetchError = "Raspuns fara campul organizations (server invechit?)."
+                return emptyList()
+            }
+            val list = Regex("""\{[^}]*}""").findAll(arr).mapNotNull { m ->
                 val o = m.value
                 val slug = Regex(""""slug"\s*:\s*"([^"]+)"""").find(o)?.groupValues?.get(1) ?: return@mapNotNull null
                 val name = Regex(""""name"\s*:\s*"([^"]+)"""").find(o)?.groupValues?.get(1) ?: slug
                 Org(slug, name)
             }.toList()
-        } catch (_: Exception) { emptyList() }
+            if (list.isEmpty()) lastFetchError = "Contul tău nu are proiecte asociate."
+            list
+        } catch (e: Exception) {
+            lastFetchError = "Eroare de rețea: ${e.message?.take(80) ?: "necunoscută"}"
+            emptyList()
+        }
     }
 
     enum class OneStatus { SUCCESS, SKIPPED, FAILED }

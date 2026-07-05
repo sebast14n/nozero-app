@@ -159,8 +159,8 @@ class RecordingsActivity : AppCompatActivity() {
                 refreshStatus()
                 if (orgs.isEmpty()) {
                     AlertDialog.Builder(this).setTitle("Fără listă de proiecte")
-                        .setMessage("Nu am putut încărca proiectele (verifică autentificarea/conexiunea). " +
-                            "Urc în spațiul tău personal, fără proiect?")
+                        .setMessage((uploadManager.lastFetchError ?: "Nu am putut încărca proiectele.") +
+                            "\n\nUrc în spațiul tău personal, fără proiect?")
                         .setPositiveButton("Da, personal") { _, _ -> confirmWifiAndStart(dirs, null) }
                         .setNegativeButton("Anulează", null).show()
                     return@runOnUiThread

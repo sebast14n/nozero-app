@@ -186,7 +186,13 @@ class CardUploadActivity : AppCompatActivity() {
             val orgs = uploadManager.fetchOrgs()
             runOnUiThread {
                 tvStatus.text = "✓ Card scanat. Verifică datele înainte de upload."
-                if (orgs.isEmpty()) { toast("Nu am putut încărca proiectele"); return@runOnUiThread }
+                if (orgs.isEmpty()) {
+                    AlertDialog.Builder(this)
+                        .setTitle("Nu pot încărca proiectele")
+                        .setMessage(uploadManager.lastFetchError ?: "Motiv necunoscut.")
+                        .setPositiveButton("OK", null).show()
+                    return@runOnUiThread
+                }
                 val prefs = getSharedPreferences("bioecho_prefs", MODE_PRIVATE)
                 val last = prefs.getString("upload_project", null)
                 val names = orgs.map { it.name }.toTypedArray()
