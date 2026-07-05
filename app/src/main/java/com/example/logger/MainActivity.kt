@@ -727,25 +727,92 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) { cb(best) }
     }
 
+    /** Editor de PROGRAM la pornirea senzorului fix — nu mai porneste tacit. Ferestre ADITIVE:
+     *  dimineata (rasarit ±h), seara (apus ±h), noapte (interval on/off). Preview „acum inreg./nu". */
     private fun showFixedSensorPrep(lat: Double?, lon: Double?) {
-        val locTxt = if (lat != null && lon != null) "📍 Locație: %.5f, %.5f".format(lat, lon)
-                     else "📍 Locație: necunoscută"
-        val msg = buildString {
-            append(locTxt).append("\n\n")
-            append("🌙 Program propus (offline, după soare):\n").append(scheduleSuggestion(lat, lon)).append("\n\n")
-            append("🔋 Baterie acum:\n").append(batteryReport()).append("\n\n")
-            append("✅ Pentru autonomie maximă în pădure:\n")
-            append("• Activează Mod avion (dacă nu e semnal) — economie majoră\n")
-            append("• Închide aplicațiile din fundal (Setări → Aplicații)\n")
-            append("• Luminozitate la minim, lasă ecranul să se stingă\n")
-            append("• Dezactivează Bluetooth/WiFi dacă nu le folosești aici\n")
-            append("• Pleacă cu bateria încărcată / powerbank dacă stă mult\n\n")
-            append("Înregistrează doar în fereastra nocturnă (restul timpului doarme → economie).")
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        val cur = RecordWindow.loadSchedule(prefs) ?: RecordWindow.Schedule.DEFAULT
+        fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+        val scroll = ScrollView(this)
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(12), dp(20), dp(4)) }
+        scroll.addView(col)
+
+        val ss = if (lat != null && lon != null) RecordWindow.sunriseSunsetLocalMin(Calendar.getInstance(), lat, lon) else null
+        val sun = if (ss != null) "Apus ~${fmtMin(ss.second)} · Răsărit ~${fmtMin(ss.first)}" else "Fără GPS → fereastră fixă 19:00–07:00"
+        col.addView(TextView(this).apply {
+            text = "📍 " + (if (lat != null && lon != null) "%.5f, %.5f".format(lat, lon) else "locație necunoscută") + "\n☀ $sun"
+            setPadding(0, 0, 0, dp(6))
+        })
+
+        fun num(v: String) = EditText(this).apply {
+            setText(v); inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            width = dp(60); setPadding(dp(8), dp(4), dp(8), dp(4))
         }
+        fun lbl(t: String) = TextView(this).apply { text = t; setPadding(dp(3), 0, dp(3), 0) }
+        fun row(vararg v: View) = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(dp(8), 0, 0, dp(4)); v.forEach { addView(it) }
+        }
+
+        val cbM = CheckBox(this).apply { text = "🌅 Dimineață"; isChecked = cur.morningOn }
+        val mB = num(cur.morningBeforeH.toString()); val mA = num(cur.morningAfterH.toString())
+        val cbE = CheckBox(this).apply { text = "🌆 Seară"; isChecked = cur.eveningOn }
+        val eB = num(cur.eveningBeforeH.toString()); val eA = num(cur.eveningAfterH.toString())
+        val cbN = CheckBox(this).apply { text = "🌙 Noapte (interval)"; isChecked = cur.nightOn }
+        val nOn = num(cur.nightOnMin.toString()); val nOff = num(cur.nightOffMin.toString())
+        val preview = TextView(this).apply { setPadding(0, dp(10), 0, dp(4)); textSize = 15f }
+
+        fun readSch() = RecordWindow.Schedule(
+            cbM.isChecked, mB.text.toString().toDoubleOrNull() ?: 0.0, mA.text.toString().toDoubleOrNull() ?: 0.0,
+            cbE.isChecked, eB.text.toString().toDoubleOrNull() ?: 0.0, eA.text.toString().toDoubleOrNull() ?: 0.0,
+            cbN.isChecked, nOn.text.toString().toIntOrNull() ?: 0, nOff.text.toString().toIntOrNull() ?: 0)
+        fun refresh() {
+            val c = Calendar.getInstance()
+            val active = RecordWindow.scheduleActive(c, lat, lon, readSch())
+            val now = fmtMin(c.get(Calendar.HOUR_OF_DAY) * 60 + c.get(Calendar.MINUTE))
+            preview.text = if (active) "✅ Acum ($now): ÎNREGISTREAZĂ" else "⏸ Acum ($now): NU înregistrează (economie)"
+            preview.setTextColor(if (active) 0xFF66BB6A.toInt() else 0xFFFFB74D.toInt())
+        }
+        val watcher = object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) = refresh()
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        }
+        listOf(mB, mA, eB, eA, nOn, nOff).forEach { it.addTextChangedListener(watcher) }
+        listOf(cbM, cbE, cbN).forEach { it.setOnCheckedChangeListener { _, _ -> refresh() } }
+
+        fun preset(s: RecordWindow.Schedule) {
+            cbM.isChecked = s.morningOn; mB.setText(s.morningBeforeH.toString()); mA.setText(s.morningAfterH.toString())
+            cbE.isChecked = s.eveningOn; eB.setText(s.eveningBeforeH.toString()); eA.setText(s.eveningAfterH.toString())
+            cbN.isChecked = s.nightOn; nOn.setText(s.nightOnMin.toString()); nOff.setText(s.nightOffMin.toString()); refresh()
+        }
+        fun pbtn(t: String, s: RecordWindow.Schedule) = Button(this).apply {
+            text = t; textSize = 11f
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { preset(s) }
+        }
+        col.addView(lbl("Preseturi:"))
+        col.addView(row(
+            pbtn("🦇 Toată noaptea", RecordWindow.Schedule(false, 0.5, 2.0, false, 1.0, 1.0, true, 5, 0)),
+            pbtn("🐦 Zori+amurg", RecordWindow.Schedule(true, 0.5, 2.0, true, 1.0, 1.0, false, 5, 10)),
+            pbtn("🔋 Interval", RecordWindow.Schedule(false, 0.5, 2.0, false, 1.0, 1.0, true, 5, 10))))
+
+        col.addView(cbM); col.addView(row(lbl("răsărit −"), mB, lbl("h  +"), mA, lbl("h")))
+        col.addView(cbE); col.addView(row(lbl("apus −"), eB, lbl("h  +"), eA, lbl("h")))
+        col.addView(cbN); col.addView(row(nOn, lbl("min ON  "), nOff, lbl("min OFF  (0=toată noaptea)")))
+        col.addView(preview)
+        col.addView(TextView(this).apply { text = "🔋 ${batteryReport()}"; setPadding(0, dp(8), 0, 0); textSize = 12f })
+        refresh()
+
         AlertDialog.Builder(this)
-            .setTitle("📍 Pregătire senzor fix")
-            .setMessage(msg)
-            .setPositiveButton("▶ Pornește") { _, _ -> startRecording(lat, lon) }
+            .setTitle("🗓 Program senzor fix")
+            .setView(scroll)
+            .setPositiveButton("▶ Pornește") { _, _ ->
+                RecordWindow.saveSchedule(prefs, readSch())
+                prefs.edit().putBoolean("schedule_enabled", true).apply()
+                startRecording(lat, lon)
+            }
             .setNeutralButton("✈ Mod avion") { _, _ ->
                 startActivity(Intent(Settings.ACTION_AIRPLANE_MODE_SETTINGS)); updateUI(false)
             }

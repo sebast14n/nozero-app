@@ -68,6 +68,7 @@
         <activity android:name=".MicTestActivity" android:exported="false" android:label="Test microfoane"/>
         <activity android:name=".PlaybackActivity" android:exported="false" android:label="Redare"/>
         <activity android:name=".RecordingsActivity" android:exported="false" android:label="Înregistrări"/>
+        <activity android:name=".CardUploadActivity" android:exported="false" android:label="Upload card SD"/>
         <activity android:name=".LiveListenActivity" android:exported="false" android:label="Ascultă live"/>
 
         <service

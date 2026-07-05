@@ -40,7 +40,109 @@ class UploadManager(private val context: Context) {
 
     fun getLocalSessions(): List<File> = Storage.sessions(context)
 
-    fun uploadSessionAsync(sessionDir: File, callback: ProgressCallback) {
+    data class Org(val slug: String, val name: String)
+
+    /** Proiectele (tenants) in care e userul — pt selectorul „in ce proiect urci?".
+     *  Sincron: a se apela pe thread de fundal. Citeste /api/auth/mobile-me. */
+    fun fetchOrgs(): List<Org> {
+        val token = jwtToken ?: return emptyList()
+        return try {
+            val conn = (URL("$SERVER/api/auth/mobile-me").openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                setRequestProperty("Authorization", "Bearer $token")
+                connectTimeout = 15_000; readTimeout = 15_000
+            }
+            if (conn.responseCode !in 200..299) return emptyList()
+            val body = conn.inputStream.bufferedReader().readText()
+            val arr = Regex(""""organizations"\s*:\s*\[(.*?)]""", RegexOption.DOT_MATCHES_ALL)
+                .find(body)?.groupValues?.get(1) ?: return emptyList()
+            Regex("""\{[^}]*}""").findAll(arr).mapNotNull { m ->
+                val o = m.value
+                val slug = Regex(""""slug"\s*:\s*"([^"]+)"""").find(o)?.groupValues?.get(1) ?: return@mapNotNull null
+                val name = Regex(""""name"\s*:\s*"([^"]+)"""").find(o)?.groupValues?.get(1) ?: slug
+                Org(slug, name)
+            }.toList()
+        } catch (_: Exception) { emptyList() }
+    }
+
+    enum class OneStatus { SUCCESS, SKIPPED, FAILED }
+
+    /** MD5 hex al continutului (streaming — nu incarca fisierul in RAM). */
+    fun md5(open: () -> java.io.InputStream): String {
+        val md = java.security.MessageDigest.getInstance("MD5")
+        open().use { input ->
+            val buf = ByteArray(256 * 1024)
+            while (true) { val r = input.read(buf); if (r < 0) break; md.update(buf, 0, r) }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /** Care MD5-uri exista deja pe server (dedup INAINTE de a re-urca — util la carduri SD deja urcate). */
+    fun existingHashes(hashes: List<String>): Set<String> {
+        val token = jwtToken ?: return emptySet()
+        if (hashes.isEmpty()) return emptySet()
+        return try {
+            val conn = (URL("$SERVER/api/recordings/check-hashes").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"; doOutput = true
+                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("Content-Type", "application/json")
+                connectTimeout = 15_000; readTimeout = 30_000
+            }
+            val payload = "{\"hashes\":[" + hashes.joinToString(",") { "\"$it\"" } + "]}"
+            conn.outputStream.use { it.write(payload.toByteArray()) }
+            if (conn.responseCode !in 200..299) return emptySet()
+            val body = conn.inputStream.bufferedReader().readText()
+            Regex("[0-9a-f]{32}").findAll(body).map { it.value }.toSet()
+        } catch (_: Exception) { emptySet() }
+    }
+
+    /** Urca un fisier audio prin STREAM (ex. de pe card SD, content://), cu tenant + metadate GUANO.
+     *  `open` da un InputStream nou la fiecare incercare (retry). */
+    fun uploadStream(fileName: String, open: () -> java.io.InputStream, projectSlug: String?,
+                     recordedAt: String?, lat: Double?, lon: Double?, onBytes: (Long) -> Unit): OneStatus {
+        val token = jwtToken ?: return OneStatus.FAILED
+        for (attempt in 0 until MAX_RETRIES) {
+            try {
+                val boundary = "BioEcho${System.currentTimeMillis()}"
+                val mime = if (fileName.endsWith(".wav", true)) "audio/wav" else "audio/mpeg"
+                val conn = openConn("$SERVER/api/recordings/upload", token, boundary, 60_000, 600_000)
+                DataOutputStream(conn.outputStream).use { out ->
+                    out.writeBytes("--$boundary\r\n")
+                    out.writeBytes("Content-Disposition: form-data; name=\"file\"; filename=\"$fileName\"\r\n")
+                    out.writeBytes("Content-Type: $mime\r\n\r\n")
+                    open().use { input ->
+                        val buf = ByteArray(256 * 1024); var total = 0L; var last = 0L
+                        while (true) {
+                            val r = input.read(buf); if (r < 0) break
+                            out.write(buf, 0, r); total += r
+                            if (total - last >= 512 * 1024) { onBytes(total); last = total }
+                        }
+                        onBytes(total)
+                    }
+                    out.writeBytes("\r\n")
+                    if (!projectSlug.isNullOrBlank()) writeFieldPart(out, boundary, "project_slug", projectSlug)
+                    if (!recordedAt.isNullOrBlank()) writeFieldPart(out, boundary, "recorded_at", recordedAt)
+                    if (lat != null && lon != null) {
+                        writeFieldPart(out, boundary, "lat", lat.toString())
+                        writeFieldPart(out, boundary, "lon", lon.toString())
+                    }
+                    out.writeBytes("--$boundary--\r\n")
+                }
+                return when (conn.responseCode) {
+                    in 200..299 -> OneStatus.SUCCESS
+                    409 -> OneStatus.SKIPPED
+                    in 400..499 -> OneStatus.FAILED
+                    else -> if (attempt < MAX_RETRIES - 1) { Thread.sleep(2000L * (attempt + 1)); continue } else OneStatus.FAILED
+                }
+            } catch (e: Exception) {
+                if (attempt == MAX_RETRIES - 1) return OneStatus.FAILED
+                Thread.sleep(2000L * (attempt + 1))
+            }
+        }
+        return OneStatus.FAILED
+    }
+
+    fun uploadSessionAsync(sessionDir: File, projectSlug: String?, callback: ProgressCallback) {
         Thread {
             // WAKELOCK: tine CPU pornit pe durata upload-ului — ecranul se poate stinge / screen-saver
             // poate intra, transferul NU se mai intrerupe.
@@ -48,14 +150,14 @@ class UploadManager(private val context: Context) {
             val wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BioEcho:upload")
             try {
                 wl.acquire(30 * 60 * 1000L)   // max 30 min siguranta
-                runUpload(sessionDir, callback)
+                runUpload(sessionDir, projectSlug, callback)
             } finally {
                 if (wl.isHeld) try { wl.release() } catch (_: Exception) {}
             }
         }.start()
     }
 
-    private fun runUpload(sessionDir: File, callback: ProgressCallback) {
+    private fun runUpload(sessionDir: File, projectSlug: String?, callback: ProgressCallback) {
         val token = jwtToken
         if (token.isNullOrBlank()) { callback.onError("Neautentificat. Scanează QR pe pagina principală."); return }
 
@@ -78,7 +180,7 @@ class UploadManager(private val context: Context) {
         audioFiles.forEachIndexed { idx, file ->
             val base = bytesDone
             callback.onProgress(idx + 1, audioFiles.size, file.name, base, bytesTotal)
-            val status = uploadAudio(file, surveyId, token) { written ->
+            val status = uploadAudio(file, surveyId, projectSlug, token) { written ->
                 callback.onProgress(idx + 1, audioFiles.size, file.name, base + written, bytesTotal)
             }
             when (status) {
@@ -132,7 +234,7 @@ class UploadManager(private val context: Context) {
 
     private enum class UploadStatus { SUCCESS, SKIPPED, FAILED }
 
-    private fun uploadAudio(file: File, surveyId: String, token: String, onBytes: (Long) -> Unit): UploadStatus {
+    private fun uploadAudio(file: File, surveyId: String, projectSlug: String?, token: String, onBytes: (Long) -> Unit): UploadStatus {
         for (attempt in 0 until MAX_RETRIES) {
             try {
                 val boundary = "BioEcho${System.currentTimeMillis()}"
@@ -146,6 +248,7 @@ class UploadManager(private val context: Context) {
                 DataOutputStream(conn.outputStream).use { out ->
                     writeFilePart(out, boundary, "file", file.name, mime, file, onBytes)
                     writeFieldPart(out, boundary, "survey_id", surveyId)
+                    if (!projectSlug.isNullOrBlank()) writeFieldPart(out, boundary, "project_slug", projectSlug)
                     out.writeBytes("--$boundary--\r\n")
                 }
                 val code = conn.responseCode

@@ -1,5 +1,6 @@
 package com.example.logger
 
+import android.content.SharedPreferences
 import java.util.Calendar
 import java.util.TimeZone
 import kotlin.math.*
@@ -80,4 +81,66 @@ object RecordWindow {
 
     fun isActiveNow(lat: Double?, lon: Double?): Boolean =
         isActive(Calendar.getInstance(), lat, lon)
+
+    // ─────────────────────────── Program configurabil (ferestre ADITIVE) ───────────────────────────
+    // Trei ferestre care se pot activa independent (union): inregistreaza daca ORICARE e activa.
+    //  - Dimineata: [rasarit - beforeH, rasarit + afterH]  (continuu)
+    //  - Seara:     [apus - beforeH, apus + afterH]        (continuu)
+    //  - Noapte:    intre apus si rasarit, ciclu onMin ON / offMin OFF (offMin=0 => toata noaptea)
+    data class Schedule(
+        val morningOn: Boolean, val morningBeforeH: Double, val morningAfterH: Double,
+        val eveningOn: Boolean, val eveningBeforeH: Double, val eveningAfterH: Double,
+        val nightOn: Boolean, val nightOnMin: Int, val nightOffMin: Int
+    ) {
+        companion object {
+            // implicit = toata noaptea continuu (apropiat de comportamentul vechi, fara buffer)
+            val DEFAULT = Schedule(false, 0.5, 2.0, false, 1.0, 1.0, true, 5, 0)
+        }
+    }
+
+    fun scheduleActive(cal: Calendar, lat: Double?, lon: Double?, sch: Schedule): Boolean {
+        val nowMin = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
+        val ss = if (lat != null && lon != null) sunriseSunsetLocalMin(cal, lat, lon) else null
+        if (ss == null) {  // fara GPS -> fallback fereastra fixa daca vreo fereastra nocturna e activa
+            return (sch.eveningOn || sch.nightOn || sch.morningOn) &&
+                (nowMin >= FALLBACK_START_HOUR * 60 || nowMin < FALLBACK_END_HOUR * 60)
+        }
+        val (sunrise, sunset) = ss
+        fun inWin(center: Int, beforeMin: Int, afterMin: Int): Boolean {
+            val start = (center - beforeMin + 1440) % 1440
+            val end = (center + afterMin) % 1440
+            return if (start <= end) nowMin in start..end else nowMin >= start || nowMin <= end
+        }
+        if (sch.morningOn && inWin(sunrise, (sch.morningBeforeH * 60).toInt(), (sch.morningAfterH * 60).toInt())) return true
+        if (sch.eveningOn && inWin(sunset, (sch.eveningBeforeH * 60).toInt(), (sch.eveningAfterH * 60).toInt())) return true
+        if (sch.nightOn) {
+            val isDark = if (sunset > sunrise) (nowMin >= sunset || nowMin < sunrise) else (nowMin in sunset until sunrise)
+            if (isDark) {
+                val since = ((nowMin - sunset) + 1440) % 1440
+                val cycle = sch.nightOnMin + sch.nightOffMin
+                if (cycle <= 0) return true
+                if (since % cycle < sch.nightOnMin) return true
+            }
+        }
+        return false
+    }
+
+    /** Programul salvat de user (din editorul senzorului fix), sau null daca n-a configurat niciodata. */
+    fun loadSchedule(prefs: SharedPreferences): Schedule? {
+        if (!prefs.getBoolean("sch_set", false)) return null
+        return Schedule(
+            prefs.getBoolean("sch_m_on", false), prefs.getFloat("sch_m_before", 0.5f).toDouble(), prefs.getFloat("sch_m_after", 2f).toDouble(),
+            prefs.getBoolean("sch_e_on", false), prefs.getFloat("sch_e_before", 1f).toDouble(), prefs.getFloat("sch_e_after", 1f).toDouble(),
+            prefs.getBoolean("sch_n_on", true), prefs.getInt("sch_n_on", 5), prefs.getInt("sch_n_off", 0)
+        )
+    }
+
+    fun saveSchedule(prefs: SharedPreferences, s: Schedule) {
+        prefs.edit()
+            .putBoolean("sch_set", true)
+            .putBoolean("sch_m_on", s.morningOn).putFloat("sch_m_before", s.morningBeforeH.toFloat()).putFloat("sch_m_after", s.morningAfterH.toFloat())
+            .putBoolean("sch_e_on", s.eveningOn).putFloat("sch_e_before", s.eveningBeforeH.toFloat()).putFloat("sch_e_after", s.eveningAfterH.toFloat())
+            .putBoolean("sch_n_on", s.nightOn).putInt("sch_n_on", s.nightOnMin).putInt("sch_n_off", s.nightOffMin)
+            .apply()
+    }
 }

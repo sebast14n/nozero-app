@@ -49,8 +49,9 @@ class FindSensorActivity : AppCompatActivity() {
     private var tone: ToneGenerator? = null
     private var vibrator: Vibrator? = null
 
-    // address -> [name, rssi, lastSeenMs]
-    private data class Dev(var name: String, var rssi: Int, var seen: Long)
+    // address -> [name, rssi, lastSeenMs, brand din manufacturer data, eticheta senzor cunoscut din OUI]
+    private data class Dev(var name: String, var rssi: Int, var seen: Long,
+                           var brand: String? = null, var known: String? = null)
     private val devices = HashMap<String, Dev>()
     private var order: List<String> = emptyList()
 
@@ -72,6 +73,9 @@ class FindSensorActivity : AppCompatActivity() {
             .any { n.contains(it) }
     }
     private fun loadOuis() {
+        // senzori cunoscuti din fabrica (ex. Song Meter Wildlife Acoustics 9C:25:BE) — recunoscuti
+        // automat, fara sa-i inveti manual
+        BleVendors.KNOWN_SENSOR_OUI.keys.forEach { sensorOuis.add(it) }
         getSharedPreferences("ble_finder", MODE_PRIVATE).getString("sensor_ouis", "")
             ?.split(",")?.filter { it.isNotBlank() }?.forEach { sensorOuis.add(it) }
     }
@@ -161,7 +165,10 @@ class FindSensorActivity : AppCompatActivity() {
             val addr = try { result.device?.address } catch (_: SecurityException) { null } ?: return
             val nm = (result.scanRecord?.deviceName ?: "").ifBlank { "(fără nume)" }
             val now = System.currentTimeMillis()
-            devices[addr] = Dev(nm, result.rssi, now)
+            // brand din company ID (manufacturer specific data) + eticheta senzor cunoscut din OUI
+            val msd = result.scanRecord?.manufacturerSpecificData
+            val brand = if (msd != null && msd.size() > 0) BleVendors.brandOf(msd.keyAt(0)) else null
+            devices[addr] = Dev(nm, result.rssi, now, brand, BleVendors.knownSensorLabel(addr))
             if (addr == targetAddr) updateHoming(result.rssi)
         }
         override fun onScanFailed(errorCode: Int) {
@@ -211,8 +218,19 @@ class FindSensorActivity : AppCompatActivity() {
         val sensorCount = order.count { isSensor(it, devices[it]!!.name) }
         val items = order.map { addr ->
             val d = devices[addr]!!
-            val tag = if (isSensor(addr, d.name)) "🛰 SENZOR  " else "📡  "
-            "$tag${d.name}\n     ${d.rssi} dBm · ~${distM(d.rssi.toDouble())} · $addr"
+            val tag = if (isSensor(addr, d.name)) "🛰 " else "📡 "
+            // titlu: eticheta senzor cunoscut (+ nume/serie difuzata) > nume difuzat > brand > generic
+            val title = when {
+                d.known != null && d.name != "(fără nume)" -> "${d.known} · ${d.name}"
+                d.known != null -> d.known!!
+                d.name != "(fără nume)" -> d.name
+                d.brand != null -> "${d.brand} (dispozitiv)"
+                else -> "(necunoscut)"
+            }
+            val bits = mutableListOf("${d.rssi} dBm", "~${distM(d.rssi.toDouble())}")
+            if (d.brand != null && d.known == null) bits.add(d.brand!!)
+            bits.add(addr)
+            "$tag$title\n     ${bits.joinToString(" · ")}"
         }
         listView.adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, items) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
@@ -245,7 +263,9 @@ class FindSensorActivity : AppCompatActivity() {
         ema = (d?.rssi ?: -100).toDouble(); emaPrev = ema
         listView.visibility = View.GONE
         homing.visibility = View.VISIBLE
-        tvName.text = "🎯 ${d?.name ?: addr}\n$addr"
+        val label = d?.known?.let { k -> if (d.name != "(fără nume)") "$k · ${d.name}" else k }
+            ?: d?.name?.takeIf { it != "(fără nume)" } ?: d?.brand ?: addr
+        tvName.text = "🎯 $label\n$addr"
         tvStatus.text = "Mergi încet în orice direcție și urmărește dacă te apropii."
         updateHoming(d?.rssi ?: -100)
     }

@@ -47,6 +47,12 @@ class RecordingsActivity : AppCompatActivity() {
         tvStatus = TextView(this).apply { setTextColor(0xFF90CAF9.toInt()); textSize = 12f; setPadding(0, 0, 0, 8) }
         root.addView(tvStatus)
 
+        // upload direct de pe cardul unui senzor (Song Meter) — flux separat cu verificare + dedup
+        root.addView(Button(this).apply {
+            text = "💾 Urcă de pe card SD (senzor)"
+            setOnClickListener { startActivity(Intent(this@RecordingsActivity, CardUploadActivity::class.java)) }
+        })
+
         // bara select tot + actiuni lot
         val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val btnAll = Button(this).apply {
@@ -140,22 +146,63 @@ class RecordingsActivity : AppCompatActivity() {
         val dirs = sessions.filter { selected.contains(it.name) }
         if (dirs.isEmpty()) { toast("Bifează cel puțin o sesiune"); return }
         if (uploadManager.jwtToken.isNullOrBlank()) { toast("⚠ Neautentificat — scanează QR pe pagina principală"); return }
+        pickTenantThen(dirs)
+    }
+
+    /** Alege proiectul (tenant) in care urci — apoi confirma WiFi + porneste.
+     *  Datele intra in contul tau, in proiectul ales; le trimiti spre analiza ulterior din platforma. */
+    private fun pickTenantThen(dirs: List<File>) {
+        tvStatus.text = "Încarc lista proiectelor…"
+        Thread {
+            val orgs = uploadManager.fetchOrgs()
+            runOnUiThread {
+                refreshStatus()
+                if (orgs.isEmpty()) {
+                    AlertDialog.Builder(this).setTitle("Fără listă de proiecte")
+                        .setMessage("Nu am putut încărca proiectele (verifică autentificarea/conexiunea). " +
+                            "Urc în spațiul tău personal, fără proiect?")
+                        .setPositiveButton("Da, personal") { _, _ -> confirmWifiAndStart(dirs, null) }
+                        .setNegativeButton("Anulează", null).show()
+                    return@runOnUiThread
+                }
+                val prefs = getSharedPreferences("bioecho_prefs", MODE_PRIVATE)
+                val last = prefs.getString("upload_project", null)
+                val names = orgs.map { it.name }.toTypedArray()
+                var sel = orgs.indexOfFirst { it.slug == last }.let { if (it >= 0) it else 0 }
+                AlertDialog.Builder(this).setTitle("În ce proiect urci?")
+                    .setSingleChoiceItems(names, sel) { _, w -> sel = w }
+                    .setPositiveButton("Continuă") { _, _ ->
+                        val org = orgs[sel]
+                        prefs.edit().putString("upload_project", org.slug).apply()
+                        confirmWifiAndStart(dirs, org.slug)
+                    }
+                    .setNegativeButton("Anulează", null).show()
+            }
+        }.start()
+    }
+
+    private fun confirmWifiAndStart(dirs: List<File>, projectSlug: String?) {
         if (!isWifi()) {
             AlertDialog.Builder(this).setTitle("⚠ Nu ești pe WiFi")
                 .setMessage("Upload pe date mobile poate consuma volum mare. Continui?")
-                .setPositiveButton("Da") { _, _ -> startQueue(dirs) }
+                .setPositiveButton("Da") { _, _ -> startQueue(dirs, projectSlug) }
                 .setNegativeButton("Anulează", null).show()
-        } else startQueue(dirs)
+        } else startQueue(dirs, projectSlug)
     }
 
-    private fun startQueue(dirs: List<File>) {
+    private fun refreshStatus() {
+        val total = sessions.sumOf { Storage.dirSize(it) }
+        tvStatus.text = "${sessions.size} sesiuni · ${Storage.humanSize(total)} · selectate: ${selected.size}"
+    }
+
+    private fun startQueue(dirs: List<File>, projectSlug: String?) {
         busy = true
         bar.visibility = View.VISIBLE; tvProg.visibility = View.VISIBLE
         btnUpload.isEnabled = false; btnDelete.isEnabled = false
-        uploadQueue(dirs, 0, 0, 0)
+        uploadQueue(dirs, projectSlug, 0, 0, 0)
     }
 
-    private fun uploadQueue(dirs: List<File>, i: Int, okTot: Int, dupTot: Int) {
+    private fun uploadQueue(dirs: List<File>, projectSlug: String?, i: Int, okTot: Int, dupTot: Int) {
         if (i >= dirs.size) {
             runOnUiThread {
                 bar.visibility = View.GONE; tvProg.visibility = View.GONE
@@ -167,7 +214,7 @@ class RecordingsActivity : AppCompatActivity() {
             return
         }
         val dir = dirs[i]
-        uploadManager.uploadSessionAsync(dir, object : UploadManager.ProgressCallback {
+        uploadManager.uploadSessionAsync(dir, projectSlug, object : UploadManager.ProgressCallback {
             override fun onProgress(fileIndex: Int, fileCount: Int, fileName: String, bytesDone: Long, bytesTotal: Long) {
                 runOnUiThread {
                     val pct = if (bytesTotal > 0) (bytesDone * 100 / bytesTotal).toInt() else 0
@@ -178,11 +225,11 @@ class RecordingsActivity : AppCompatActivity() {
             }
             override fun onDone(result: UploadManager.UploadResult) {
                 runOnUiThread { refresh() }
-                uploadQueue(dirs, i + 1, okTot + result.success, dupTot + result.skipped)
+                uploadQueue(dirs, projectSlug, i + 1, okTot + result.success, dupTot + result.skipped)
             }
             override fun onError(message: String) {
                 runOnUiThread { toast("⚠ ${label(dir)}: $message") }
-                uploadQueue(dirs, i + 1, okTot, dupTot)
+                uploadQueue(dirs, projectSlug, i + 1, okTot, dupTot)
             }
         })
     }

@@ -193,7 +193,11 @@ class RecordingService : Service() {
     @Synchronized
     private fun evaluateWindow() {
         if (forcedRecording) { if (!recordingActive) resumeRecording(); return }
-        val active = RecordWindow.isActiveNow(lastLat ?: staticLat, lastLon ?: staticLon)
+        val lat = lastLat ?: staticLat; val lon = lastLon ?: staticLon
+        // program configurat de user (ferestre aditive) daca exista; altfel fereastra nocturna clasica
+        val sch = RecordWindow.loadSchedule(getSharedPreferences("bioecho_prefs", MODE_PRIVATE))
+        val active = if (sch != null) RecordWindow.scheduleActive(java.util.Calendar.getInstance(), lat, lon, sch)
+                     else RecordWindow.isActiveNow(lat, lon)
         if (active && !recordingActive) {
             resumeRecording()
         } else if (!active && recordingActive) {
