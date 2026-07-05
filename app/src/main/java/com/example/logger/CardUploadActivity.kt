@@ -210,11 +210,24 @@ class CardUploadActivity : AppCompatActivity() {
     // ── 4. Upload cu dedup ──
     private fun doUpload(files: List<CardFile>, loc: Pair<Double, Double>?, bar: ProgressBar, prog: TextView) {
         busy = true
-        runOnUiThread { bar.visibility = View.VISIBLE; prog.visibility = View.VISIBLE; prog.text = "Verific ce e deja urcat…" }
+        runOnUiThread {
+            bar.visibility = View.VISIBLE; prog.visibility = View.VISIBLE
+            bar.isIndeterminate = false; bar.max = 100; bar.progress = 0
+            prog.text = "Verific ce e deja urcat… 0/${files.size}"
+        }
         Thread {
-            // 4a. hash local pentru fiecare fisier -> care exista deja pe server (nu le re-urcam)
+            // 4a. hash local pentru fiecare fisier -> care exista deja pe server (nu le re-urcam).
+            //     Calcularea MD5 citeste fiecare fisier integral de pe cardul SD => poate dura;
+            //     aratam progres pe fisier ca sa nu para inghetat.
             val hashByFile = HashMap<String, String>()
-            files.forEach { f -> try { hashByFile[f.name] = uploadManager.md5 { contentResolver.openInputStream(f.uri)!! } } catch (_: Exception) {} }
+            files.forEachIndexed { i, f ->
+                runOnUiThread {
+                    prog.text = "Verific ${i + 1}/${files.size} · ${f.name}"
+                    bar.progress = (i * 100 / files.size.coerceAtLeast(1))
+                }
+                try { hashByFile[f.name] = uploadManager.md5 { contentResolver.openInputStream(f.uri)!! } } catch (_: Exception) {}
+            }
+            runOnUiThread { prog.text = "Verific pe server…"; bar.progress = 100 }
             val existing = uploadManager.existingHashes(hashByFile.values.toList())
             val toUpload = files.filter { hashByFile[it.name]?.let { h -> h !in existing } ?: true }
             val already = files.size - toUpload.size
