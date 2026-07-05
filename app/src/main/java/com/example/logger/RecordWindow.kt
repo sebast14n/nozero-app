@@ -127,12 +127,16 @@ object RecordWindow {
 
     /** Programul salvat de user (din editorul senzorului fix), sau null daca n-a configurat niciodata. */
     fun loadSchedule(prefs: SharedPreferences): Schedule? {
-        if (!prefs.getBoolean("sch_set", false)) return null
-        return Schedule(
-            prefs.getBoolean("sch_m_on", false), prefs.getFloat("sch_m_before", 0.5f).toDouble(), prefs.getFloat("sch_m_after", 2f).toDouble(),
-            prefs.getBoolean("sch_e_on", false), prefs.getFloat("sch_e_before", 1f).toDouble(), prefs.getFloat("sch_e_after", 1f).toDouble(),
-            prefs.getBoolean("sch_n_on", true), prefs.getInt("sch_n_on", 5), prefs.getInt("sch_n_off", 0)
-        )
+        try {
+            if (!prefs.getBoolean("sch_set", false)) return null
+            return Schedule(
+                prefs.getBoolean("sch_m_on", false), prefs.getFloat("sch_m_before", 0.5f).toDouble(), prefs.getFloat("sch_m_after", 2f).toDouble(),
+                prefs.getBoolean("sch_e_on", false), prefs.getFloat("sch_e_before", 1f).toDouble(), prefs.getFloat("sch_e_after", 1f).toDouble(),
+                prefs.getBoolean("sch_n_on", true), prefs.getInt("sch_n_onmin", 5), prefs.getInt("sch_n_off", 0)
+            )
+        } catch (e: Exception) {
+            return null   // prefs corupte (bug vechi: cheia sch_n_on scrisa si ca Int) -> foloseste DEFAULT
+        }
     }
 
     fun saveSchedule(prefs: SharedPreferences, s: Schedule) {
@@ -140,7 +144,7 @@ object RecordWindow {
             .putBoolean("sch_set", true)
             .putBoolean("sch_m_on", s.morningOn).putFloat("sch_m_before", s.morningBeforeH.toFloat()).putFloat("sch_m_after", s.morningAfterH.toFloat())
             .putBoolean("sch_e_on", s.eveningOn).putFloat("sch_e_before", s.eveningBeforeH.toFloat()).putFloat("sch_e_after", s.eveningAfterH.toFloat())
-            .putBoolean("sch_n_on", s.nightOn).putInt("sch_n_on", s.nightOnMin).putInt("sch_n_off", s.nightOffMin)
+            .putBoolean("sch_n_on", s.nightOn).putInt("sch_n_onmin", s.nightOnMin).putInt("sch_n_off", s.nightOffMin)
             .apply()
     }
 }
