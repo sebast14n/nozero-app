@@ -33,7 +33,7 @@ class CardUploadActivity : AppCompatActivity() {
                                 val recordedAt: String?, val size: Long)
 
     private val pickTree = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        if (uri == null) { tvStatus.text = "Anulat. Apasă „Alege card" ca să reîncerci."; return@registerForActivityResult }
+        if (uri == null) { tvStatus.text = "Anulat. Apasă „Alege card” ca să reîncerci."; return@registerForActivityResult }
         scanCard(uri)
     }
 
@@ -61,7 +61,7 @@ class CardUploadActivity : AppCompatActivity() {
         if (uploadManager.jwtToken.isNullOrBlank()) {
             tvStatus.text = "⚠ Neautentificat — scanează QR pe pagina principală."
         } else {
-            tvStatus.text = "Bagă cardul în telefon și apasă „Alege cardul"."
+            tvStatus.text = "Bagă cardul în telefon și apasă „Alege cardul”."
         }
     }
 
@@ -90,7 +90,7 @@ class CardUploadActivity : AppCompatActivity() {
 
             runOnUiThread {
                 busy = false
-                if (wavs.isEmpty()) { tvStatus.text = "Niciun fișier .wav în folderul ales. Alege folderul cardului sau „Data"."; return@runOnUiThread }
+                if (wavs.isEmpty()) { tvStatus.text = "Niciun fișier .wav în folderul ales. Alege folderul cardului sau „Data”."; return@runOnUiThread }
                 showSummary(wavs, serials.toList(), dMin, dMax, locFirst, varies, total)
             }
         }.start()
