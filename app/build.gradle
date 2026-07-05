@@ -13,8 +13,8 @@ android {
         // fara reinregistrare Google. Pachet diferit de BioEcho → coexista, fara conflict de instalare.
         minSdk 26
         targetSdk 34   // 34 (nu 35): evita edge-to-edge fortat de Android 15 care punea butoanele sub bara de navigatie. App sideloaded, deci targetSdk 34 e ok.
-        versionCode 16
-        versionName "2.9.5"
+        versionCode 17
+        versionName "2.9.6"
 
         buildConfigField "String", "SERVER_URL", "\"https://noze.ro\""
         buildConfigField "String", "GOOGLE_WEB_CLIENT_ID",
@@ -82,5 +82,6 @@ dependencies {
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
     implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.7.0"
     // BirdNET on-device (LiveListenActivity); modelul .tflite se descarca de pe noze.ro
-    implementation "org.tensorflow:tensorflow-lite:2.16.1"   // 16 KB aligned
+    // LiteRT (succesorul TFLite) — pastreaza API-ul org.tensorflow.lite.Interpreter + .so aliniat 16 KB
+    implementation "com.google.ai.edge.litert:litert:1.4.2"
 }
