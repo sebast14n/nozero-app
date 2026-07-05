@@ -468,7 +468,8 @@ class MainActivity : AppCompatActivity() {
 
         tvUploadStatus.text = "Se pregătește upload-ul..."
 
-        uploadManager.uploadSessionAsync(sessionDir, object : UploadManager.ProgressCallback {
+        val proj = getSharedPreferences(PREFS, MODE_PRIVATE).getString("upload_project", null)
+        uploadManager.uploadSessionAsync(sessionDir, proj, object : UploadManager.ProgressCallback {
             override fun onProgress(fileIndex: Int, fileCount: Int, fileName: String, bytesDone: Long, bytesTotal: Long) {
                 runOnUiThread {
                     tvUploadStatus.text = "Se încarcă $fileIndex/$fileCount: $fileName"
