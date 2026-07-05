@@ -45,9 +45,10 @@ object UpdateChecker {
                 val body = conn.inputStream.bufferedReader().readText()
                 conn.disconnect()
                 val data = JSONObject(body)
-                val latest = data.optString("latest_version")
+                // serverul intoarce "version"/"notes" (alias "latest_version"/"release_notes" pt compat)
+                val latest = data.optString("version").ifBlank { data.optString("latest_version") }
                 val apkUrl = data.optString("apk_url")
-                val notes = data.optString("release_notes", "")
+                val notes = data.optString("notes", data.optString("release_notes", ""))
                 val mandatory = data.optBoolean("mandatory", false)
                 val sizeMb = data.optDouble("apk_size_mb", 0.0)
                 val htmlUrl = data.optString("html_url", "")
