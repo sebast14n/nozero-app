@@ -2,6 +2,7 @@ package com.example.logger
 
 import android.content.Context
 import android.os.PowerManager
+import org.json.JSONObject
 import java.io.DataOutputStream
 import java.io.File
 import java.net.HttpURLConnection
@@ -69,18 +70,18 @@ class UploadManager(private val context: Context) {
                 return emptyList()
             }
             val body = conn.inputStream.bufferedReader().readText()
-            val arr = Regex(""""organizations"\s*:\s*\[(.*?)]""", RegexOption.DOT_MATCHES_ALL)
-                .find(body)?.groupValues?.get(1)
+            // parsare JSON corecta (nu regex — motorul de regex Android e strict cu acoladele)
+            val arr = JSONObject(body).optJSONArray("organizations")
             if (arr == null) {
                 lastFetchError = "Raspuns fara campul organizations (server invechit?)."
                 return emptyList()
             }
-            val list = Regex("""\{[^}]*}""").findAll(arr).mapNotNull { m ->
-                val o = m.value
-                val slug = Regex(""""slug"\s*:\s*"([^"]+)"""").find(o)?.groupValues?.get(1) ?: return@mapNotNull null
-                val name = Regex(""""name"\s*:\s*"([^"]+)"""").find(o)?.groupValues?.get(1) ?: slug
-                Org(slug, name)
-            }.toList()
+            val list = ArrayList<Org>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val slug = o.optString("slug")
+                if (slug.isNotBlank()) list.add(Org(slug, o.optString("name", slug)))
+            }
             if (list.isEmpty()) lastFetchError = "Contul tău nu are proiecte asociate."
             list
         } catch (e: Exception) {
