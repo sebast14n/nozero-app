@@ -29,6 +29,7 @@ class RecordingService : Service() {
     companion object {
         var isRunning = false
         var currentGpxPath: String? = null   // calea GPX a sesiunii curente (pt harta traseu live)
+        const val ACTION_SET_MIC = "com.example.logger.SET_MIC"  // schimba microfonul pe segmentul curent
         private const val CHANNEL_ID = "recording_channel"
         private const val NOTIF_ID   = 1
         private const val SEGMENT_MS = 10 * 60 * 1000L
@@ -78,6 +79,12 @@ class RecordingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Comanda de schimbare a microfonului din ecranul de monitor: aplica pe segmentul curent
+        // fara sa reporneasca sesiunea.
+        if (intent?.action == ACTION_SET_MIC) {
+            applyMicChange()
+            return START_STICKY
+        }
         val lat = intent?.getDoubleExtra("static_lat", Double.NaN) ?: Double.NaN
         val lon = intent?.getDoubleExtra("static_lon", Double.NaN) ?: Double.NaN
         if (!lat.isNaN() && !lon.isNaN()) {
@@ -85,6 +92,14 @@ class RecordingService : Service() {
         }
         isFixedPoint = intent?.getBooleanExtra("fixed_point", false) ?: false
         scheduled = intent?.getBooleanExtra("scheduled", false) ?: false
+
+        // stare live pentru ecranul de monitor
+        LiveState.reset()
+        LiveState.active = true
+        LiveState.mode = if (isFixedPoint) "Senzor fix" else "Transect"
+        LiveState.scheduled = scheduled
+        LiveState.sampleRate = 48000
+        LiveState.sessionStartMs = System.currentTimeMillis()
 
         // Android 14+ cere declararea explicita a tipului de serviciu
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -135,6 +150,7 @@ class RecordingService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         isRunning = false
+        LiveState.reset()
         currentGpxPath = null
         windowTimer?.cancel()
         batteryTimer?.cancel()
@@ -202,8 +218,15 @@ class RecordingService : Service() {
             resumeRecording()
         } else if (!active && recordingActive) {
             pauseRecording()
+            LiveState.statusHint = "In afara ferestrei — astept apusul (economie baterie)"
             updateNotification("⏸ In afara ferestrei — astept apusul (economie baterie)")
         }
+    }
+
+    /** Schimba microfonul in timpul inregistrarii: ruleaza segmentul curent cu noul preferat. */
+    @Synchronized
+    private fun applyMicChange() {
+        if (recordingActive) { stopAudio(); startAudioSegment() }
     }
 
     /** Porneste inregistrarea audio + tine wakelock-ul. */
@@ -211,6 +234,8 @@ class RecordingService : Service() {
     private fun resumeRecording() {
         if (recordingActive) return
         recordingActive = true
+        LiveState.recordingNow = true
+        LiveState.statusHint = ""
         if (wakeLock?.isHeld != true) wakeLock?.acquire()
         startAudioSegment()
         segmentTimer = Timer()
@@ -223,6 +248,8 @@ class RecordingService : Service() {
     @Synchronized
     private fun pauseRecording() {
         recordingActive = false
+        LiveState.recordingNow = false
+        LiveState.level = 0f
         segmentTimer?.cancel(); segmentTimer = null
         stopAudio()
         if (wakeLock?.isHeld == true) wakeLock?.release()
@@ -235,30 +262,45 @@ class RecordingService : Service() {
         val base = File(sessionDir, "audio_${"%03d".format(segmentIndex)}_$ts")
         // LOSSLESS: WAV implicit (fiabil, = Song Meter); FLAC experimental daca userul a ales
         val useFlac = getSharedPreferences("bioecho_prefs", MODE_PRIVATE).getString("audio_format", "wav") == "flac"
-        var rec = AudioSegmentRecorder(48000, 1, preferFlac = useFlac)
+        val mic = resolvePreferredMic()
+        var rec = AudioSegmentRecorder(48000, 1, preferFlac = useFlac).also { it.preferredDevice = mic }
         val f = try { rec.start(base) } catch (e: Exception) { null }
         if (f == null && useFlac) {
             // esec FLAC -> reincearca WAV (nu pierdem segmentul)
-            rec = AudioSegmentRecorder(48000, 1, preferFlac = false)
+            rec = AudioSegmentRecorder(48000, 1, preferFlac = false).also { it.preferredDevice = mic }
             try { rec.start(base) } catch (_: Exception) {}
         }
         segRec = rec
+        LiveState.segmentCount++
         logAudioDevice()
+    }
+
+    /** Microfonul ales de user (pref mic_device_id) daca inca e prezent; null = rutare implicita. */
+    private fun resolvePreferredMic(): AudioDeviceInfo? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return null
+        val id = getSharedPreferences("bioecho_prefs", MODE_PRIVATE).getInt("mic_device_id", -1)
+        if (id < 0) return null
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        return am.getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull { it.id == id }
+    }
+
+    private fun micLabelFor(d: AudioDeviceInfo?): String = when (d?.type) {
+        AudioDeviceInfo.TYPE_BUILTIN_MIC       -> "microfon intern"
+        AudioDeviceInfo.TYPE_USB_HEADSET,
+        AudioDeviceInfo.TYPE_USB_DEVICE        -> "microfon USB-C"
+        AudioDeviceInfo.TYPE_WIRED_HEADSET     -> "microfon jack 3.5mm"
+        AudioDeviceInfo.TYPE_BLUETOOTH_SCO     -> "microfon Bluetooth"
+        else -> d?.productName?.toString() ?: "necunoscut"
     }
 
     private fun logAudioDevice() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
+        // ce foloseste efectiv AudioRecord (rutat), altfel alegerea userului, altfel prima intrare
         val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val activeInput = am.getDevices(AudioManager.GET_DEVICES_INPUTS)
-            .firstOrNull { it.isSink.not() }
-        val label = when (activeInput?.type) {
-            AudioDeviceInfo.TYPE_BUILTIN_MIC       -> "microfon intern"
-            AudioDeviceInfo.TYPE_USB_HEADSET,
-            AudioDeviceInfo.TYPE_USB_DEVICE        -> "microfon USB-C"
-            AudioDeviceInfo.TYPE_WIRED_HEADSET     -> "microfon jack 3.5mm"
-            AudioDeviceInfo.TYPE_BLUETOOTH_SCO     -> "microfon Bluetooth"
-            else -> activeInput?.productName?.toString() ?: "necunoscut"
-        }
+        val dev = segRec?.routedDevice() ?: resolvePreferredMic()
+            ?: am.getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull { !it.isSink }
+        val label = micLabelFor(dev)
+        LiveState.micLabel = label
         updateNotification("🔴 Audio + GPS · $label · 48kHz")
     }
 

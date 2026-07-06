@@ -30,6 +30,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var btnStartStop: Button
     private lateinit var btnTrackMap: Button
+    private lateinit var btnMonitor: Button
     private lateinit var btnTransect: Button
     private lateinit var btnFixedSensor: Button
     private lateinit var btnLiveListen: Button
@@ -61,6 +62,7 @@ class MainActivity : AppCompatActivity() {
 
         btnStartStop     = findViewById(R.id.btnStartStop)
         btnTrackMap      = findViewById(R.id.btnTrackMap)
+        btnMonitor       = findViewById(R.id.btnMonitor)
         btnTransect      = findViewById(R.id.btnTransect)
         btnFixedSensor   = findViewById(R.id.btnFixedSensor)
         btnLiveListen    = findViewById(R.id.btnLiveListen)
@@ -93,6 +95,7 @@ class MainActivity : AppCompatActivity() {
 
         // STOP (vizibil doar in timpul inregistrarii)
         btnStartStop.setOnClickListener { if (RecordingService.isRunning) stopRecording() }
+        btnMonitor.setOnClickListener { startActivity(Intent(this, MonitorActivity::class.java)) }
         btnTrackMap.setOnClickListener {
             startActivity(Intent(this, MapActivity::class.java).putExtra("track_mode", true))
         }
@@ -277,12 +280,14 @@ class MainActivity : AppCompatActivity() {
             tvStatus.text = if (isFixedPoint) "🔴  Senzor fix — activ" else "🔴  Transect — activ"
             btnCompass.visibility = if (isFixedPoint) View.GONE else View.VISIBLE
             btnTrackMap.visibility = if (!isFixedPoint) View.VISIBLE else View.GONE  // doar la transect
+            btnMonitor.visibility = View.VISIBLE   // monitor live in ambele moduri
         } else {
             btnStartStop.visibility = View.GONE
             startButtonsRow.visibility = View.VISIBLE
             tvStatus.text = "⚪  Alege modul de operare"
             btnCompass.visibility = View.VISIBLE
             btnTrackMap.visibility = View.GONE
+            btnMonitor.visibility = View.GONE
         }
     }
 

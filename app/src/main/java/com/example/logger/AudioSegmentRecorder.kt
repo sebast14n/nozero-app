@@ -1,5 +1,6 @@
 package com.example.logger
 
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaCodec
@@ -7,6 +8,7 @@ import android.media.MediaFormat
 import android.media.MediaRecorder
 import android.os.Build
 import java.io.File
+import kotlin.math.abs
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
 
@@ -32,6 +34,16 @@ class AudioSegmentRecorder(
     private var bytesPerSample = 2          // 2 = PCM 16-bit, 4 = float 32-bit
     private var isFloat = false             // true cand inregistram pe 32-bit float (WAV)
     var outFile: File? = null; private set
+
+    /** Microfon preferat (setat inainte de start() de catre serviciu); null = ruteaza sistemul. */
+    var preferredDevice: AudioDeviceInfo? = null
+
+    /** true = raporteaza nivelul semnalului in LiveState pe durata capturii (pt ecranul de monitor). */
+    var reportLevel = true
+
+    /** Dispozitivul de intrare pe care AudioRecord chiar il foloseste (dupa rutare). */
+    fun routedDevice(): AudioDeviceInfo? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) try { ar?.routedDevice } catch (_: Exception) { null } else null
 
     /** Porneste captura. Intoarce fisierul efectiv scris (.flac sau .wav), sau null la esec. */
     fun start(baseNoExt: File): File? {
@@ -87,9 +99,35 @@ class AudioSegmentRecorder(
             val mb = AudioRecord.getMinBufferSize(sampleRate, chMask, enc)
             if (mb <= 0) return null
             val r = AudioRecord(src, sampleRate, chMask, enc, mb * 4)
-            if (r.state == AudioRecord.STATE_INITIALIZED) r
-            else { try { r.release() } catch (_: Exception) {}; null }
+            if (r.state == AudioRecord.STATE_INITIALIZED) {
+                // microfon ales de user (daca inca e prezent); altfel sistemul ruteaza implicit
+                if (preferredDevice != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    try { r.setPreferredDevice(preferredDevice) } catch (_: Exception) {}
+                }
+                r
+            } else { try { r.release() } catch (_: Exception) {}; null }
         } catch (e: Exception) { null }
+    }
+
+    // ── Nivel semnal (VU) — cost neglijabil, subesantionat 1/8 din bufferul deja citit ──
+    private fun reportFloat(buf: FloatArray, n: Int) {
+        if (!reportLevel) return
+        var pk = 0f; var i = 0
+        while (i < n) { val v = abs(buf[i]); if (v > pk) pk = v; i += 8 }
+        LiveState.level = if (pk > 1f) 1f else pk
+        LiveState.lastAudioMs = System.currentTimeMillis()
+    }
+    private fun report16(buf: ByteArray, nBytes: Int) {
+        if (!reportLevel) return
+        var pk = 0; var i = 0
+        while (i + 1 < nBytes) {
+            val s = (buf[i].toInt() and 0xff) or (buf[i + 1].toInt() shl 8)  // short LE cu semn
+            val v = if (s < 0) -s else s
+            if (v > pk) pk = v
+            i += 16   // pas de 8 esantioane (16 octeti)
+        }
+        LiveState.level = pk / 32768f
+        LiveState.lastAudioMs = System.currentTimeMillis()
     }
 
     // ── WAV ──
@@ -105,6 +143,7 @@ class AudioSegmentRecorder(
                 while (running) {
                     val n = a.read(fbuf, 0, fbuf.size, AudioRecord.READ_BLOCKING)
                     if (n > 0) {
+                        reportFloat(fbuf, n)
                         var bi = 0
                         for (i in 0 until n) {
                             val v = java.lang.Float.floatToIntBits(fbuf[i])
@@ -120,7 +159,7 @@ class AudioSegmentRecorder(
                 val buf = ByteArray(readChunk)
                 while (running) {
                     val n = a.read(buf, 0, buf.size)
-                    if (n > 0) { raf.write(buf, 0, n); dataLen += n }
+                    if (n > 0) { report16(buf, n); raf.write(buf, 0, n); dataLen += n }
                 }
             }
             // patch dimensiuni
@@ -176,6 +215,7 @@ class AudioSegmentRecorder(
                 if (running) {
                     val n = a.read(pcm, 0, pcm.size)
                     if (n > 0) {
+                        report16(pcm, n)
                         val inIdx = codec.dequeueInputBuffer(10_000)
                         if (inIdx >= 0) {
                             val ib = codec.getInputBuffer(inIdx)
