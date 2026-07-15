@@ -43,6 +43,10 @@ class RecordingService : Service() {
     private var sessionDir: File? = null
     private var segmentTimer: Timer? = null
     private var windowTimer: Timer? = null
+    private var levelTimer: Timer? = null              // indicator nivel + alerta TACERE (D1)
+    private var micCallback: android.media.AudioDeviceCallback? = null
+    private var lastMicChangeMs = 0L
+    private var micSilentSinceMs = 0L
     private var segmentIndex = 0
     private val sdf = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).also {
         it.timeZone = TimeZone.getTimeZone("UTC")
@@ -242,6 +246,11 @@ class RecordingService : Service() {
         segmentTimer?.scheduleAtFixedRate(object : TimerTask() {
             override fun run() { stopAudio(); startAudioSegment() }
         }, SEGMENT_MS, SEGMENT_MS)
+        levelTimer = Timer()   // nivel + cronometru + alerta TACERE in notificare (la 2s)
+        levelTimer?.scheduleAtFixedRate(object : TimerTask() {
+            override fun run() { updateRecNotification() }
+        }, 2000, 2000)
+        registerMicWatch()     // detecteaza bagat/scos USB/BT in timpul inregistrarii
     }
 
     /** Opreste inregistrarea + elibereaza wakelock-ul (economie baterie). */
@@ -251,6 +260,9 @@ class RecordingService : Service() {
         LiveState.recordingNow = false
         LiveState.level = 0f
         segmentTimer?.cancel(); segmentTimer = null
+        levelTimer?.cancel(); levelTimer = null
+        unregisterMicWatch()
+        micSilentSinceMs = 0L
         stopAudio()
         if (wakeLock?.isHeld == true) wakeLock?.release()
     }
@@ -302,6 +314,49 @@ class RecordingService : Service() {
         val label = micLabelFor(dev)
         LiveState.micLabel = label
         updateNotification("🔴 Audio + GPS · $label · 48kHz")
+    }
+
+    /** Indicator in notificare: cronometru + nivel + alerta TACERE (microfon mort/gol). Foloseste LiveState. */
+    private fun updateRecNotification() {
+        if (!recordingActive || !LiveState.recordingNow) return
+        val now = System.currentTimeMillis()
+        val lvl = LiveState.level
+        if (lvl >= 0.003f) micSilentSinceMs = 0L
+        else if (micSilentSinceMs == 0L) micSilentSinceMs = now
+        val silent = micSilentSinceMs != 0L && (now - micSilentSinceMs) > 10_000
+        val el = ((now - LiveState.sessionStartMs) / 1000).coerceAtLeast(0)
+        val mmss = "%d:%02d".format(el / 60, el % 60)
+        val bars = "▁▂▃▄▅▆▇█"
+        val bar = bars[(lvl * (bars.length - 1)).toInt().coerceIn(0, bars.length - 1)]
+        updateNotification(
+            if (silent) "🔴 REC $mmss · ${LiveState.micLabel} · ⚠️ TACERE — verifica microfonul!"
+            else "🔴 REC $mmss · ${LiveState.micLabel} · nivel $bar ${(lvl * 100).toInt()}%")
+    }
+
+    // ── Detectare schimbare microfon in timpul inregistrarii (USB/BT bagat/scos) → comuta automat ──
+    private fun registerMicWatch() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            micCallback = object : android.media.AudioDeviceCallback() {
+                override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>?) { onMicHardwareChange() }
+                override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>?) { onMicHardwareChange() }
+            }
+            am.registerAudioDeviceCallback(micCallback, null)
+        } catch (_: Exception) {}
+    }
+    private fun unregisterMicWatch() {
+        try { micCallback?.let { (getSystemService(Context.AUDIO_SERVICE) as AudioManager).unregisterAudioDeviceCallback(it) } } catch (_: Exception) {}
+        micCallback = null
+    }
+    @Synchronized
+    private fun onMicHardwareChange() {
+        if (!recordingActive) return
+        val now = System.currentTimeMillis()
+        if (now - lastMicChangeMs < 4000) return   // debounce schimbari rapide
+        lastMicChangeMs = now
+        applyMicChange()                            // reporneste segmentul pe noul microfon (mecanism existent)
+        updateNotification("🔀 Microfon schimbat — segment nou pe: ${LiveState.micLabel}")
     }
 
     private fun stopAudio() {
