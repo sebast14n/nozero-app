@@ -9,6 +9,7 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.Bundle
 import android.os.Looper
 import android.text.InputType
@@ -27,6 +28,10 @@ import org.osmdroid.tileprovider.modules.SqlTileWriter
 import org.osmdroid.util.BoundingBox
 import java.net.HttpURLConnection
 import java.net.URL
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
@@ -42,6 +47,13 @@ class PoisListActivity : AppCompatActivity() {
 
     private var currentLocation: Location? = null
     private var pois: MutableList<JSONObject> = mutableListOf()
+
+    // ── Selector proiect / tenant (B) — arati doar POI-urile proiectului ales ──
+    private lateinit var spOrg: Spinner
+    private var orgs: MutableList<Pair<String, String>> = mutableListOf()  // (slug, nume); primul = ("", "Toate")
+    private var selectedOrg: String? = null   // null/"" = toate proiectele
+    private var displayed: List<JSONObject> = emptyList()   // server + coada offline, randate impreuna
+    private var netCb: ConnectivityManager.NetworkCallback? = null   // auto-sync la revenirea retelei
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -64,6 +76,7 @@ class PoisListActivity : AppCompatActivity() {
             textSize = 12f
             setPadding(0, 0, 0, 12)
         }
+        spOrg = Spinner(this).apply { setPadding(0, 0, 0, 10) }
         listView = ListView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
@@ -95,20 +108,119 @@ class PoisListActivity : AppCompatActivity() {
             setOnClickListener { startActivity(Intent(this@PoisListActivity, FindSensorActivity::class.java)) }
         }
 
+        val btnImport = Button(this).apply {
+            text = "📥 Import KMZ"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 8 }
+            setOnClickListener { importKmz() }
+        }
+        val btnExport = Button(this).apply {
+            text = "📤 Export KMZ"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { exportKmz() }
+        }
+        val btnRow2 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; setPadding(0, 8, 0, 0)
+            addView(btnImport); addView(btnExport)
+        }
+
         root.addView(title)
         root.addView(tvStatus)
+        root.addView(spOrg)
         root.addView(listView)
         root.addView(btnRow)
         root.addView(btnFind)
+        root.addView(btnRow2)
         setContentView(root)
 
         startLocationUpdates()
+        selectedOrg = getSharedPreferences("bioecho_prefs", MODE_PRIVATE).getString("selected_org", null)
+        loadOrgs()   // proiectele userului -> spinner (offline-first din cache)
         loadPois()
+    }
+
+    // ── Proiectele userului pentru selector. Offline-first: arata cache-ul imediat, ──
+    // ── apoi reimprospateaza din retea daca are semnal. Slug-urile vin din /mobile-me. ──
+    private fun loadOrgs() {
+        renderOrgs(readCachedOrgs())
+        val jwt = getSharedPreferences("bioecho_prefs", MODE_PRIVATE).getString("jwt_token", null)
+        if (jwt.isNullOrBlank()) return
+        Thread {
+            try {
+                val conn = (URL(BuildConfig.SERVER_URL + "/api/auth/mobile-me").openConnection() as HttpURLConnection).apply {
+                    setRequestProperty("Authorization", "Bearer $jwt"); connectTimeout = 8000; readTimeout = 12000
+                }
+                if (conn.responseCode == 200) {
+                    val arr = JSONObject(conn.inputStream.bufferedReader().readText())
+                        .optJSONArray("organizations") ?: JSONArray()
+                    getSharedPreferences("bioecho_prefs", MODE_PRIVATE).edit()
+                        .putString("cached_orgs", arr.toString()).apply()
+                    runOnUiThread { renderOrgs(arr) }
+                }
+                conn.disconnect()
+            } catch (_: Exception) { /* offline -> ramane cache-ul; selectorul merge tot */ }
+        }.start()
+    }
+
+    private fun readCachedOrgs(): JSONArray = try {
+        JSONArray(getSharedPreferences("bioecho_prefs", MODE_PRIVATE).getString("cached_orgs", "[]"))
+    } catch (_: Exception) { JSONArray() }
+
+    private fun renderOrgs(arr: JSONArray) {
+        orgs = mutableListOf(Pair("", "🌐 Toate proiectele"))
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            orgs.add(Pair(o.optString("slug"), o.optString("name", o.optString("slug"))))
+        }
+        spOrg.onItemSelectedListener = null   // evita reset spurios cand se schimba adapterul (cache -> retea)
+        spOrg.adapter = object : ArrayAdapter<String>(this,
+            android.R.layout.simple_spinner_dropdown_item, orgs.map { it.second }) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val v = super.getView(position, convertView, parent)
+                (v as TextView).setTextColor(0xFFE0E0E0.toInt()); v.textSize = 14f
+                return v
+            }
+        }
+        val idx = orgs.indexOfFirst { it.first == (selectedOrg ?: "") }.coerceAtLeast(0)
+        spOrg.setSelection(idx, false)
+        spOrg.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                val slug = orgs.getOrNull(position)?.first?.ifBlank { null }
+                if (slug != selectedOrg) {
+                    selectedOrg = slug
+                    getSharedPreferences("bioecho_prefs", MODE_PRIVATE).edit().putString("selected_org", slug).apply()
+                    loadPois()   // reincarca filtrat pe proiectul ales
+                }
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
     }
 
     override fun onResume() {
         super.onResume()
         syncPendingPois()    // incearca sa trimita punctele salvate offline cand revii (poate ai net acum)
+        renderList()         // arata si punctele din coada offline la revenire pe ecran
+    }
+
+    // Auto-sync: cand revine reteaua (chiar fara sa redeschizi ecranul), trimite coada offline.
+    override fun onStart() {
+        super.onStart()
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        netCb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: android.net.Network) {
+                runOnUiThread { syncPendingPois() }
+            }
+        }
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 24) cm.registerDefaultNetworkCallback(netCb!!)
+        } catch (_: Exception) {}
+    }
+
+    override fun onStop() {
+        super.onStop()
+        netCb?.let {
+            try { (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).unregisterNetworkCallback(it) } catch (_: Exception) {}
+        }
+        netCb = null
     }
 
     // ── Coada OFFLINE de POI-uri: daca nu ai net la adaugare, se salveaza local si se ──
@@ -122,9 +234,12 @@ class PoisListActivity : AppCompatActivity() {
             .putString("pending_pois", arr.toString()).apply()
     }
 
-    private fun enqueuePoi(name: String, lat: Double, lon: Double) {
+    private fun enqueuePoi(name: String, lat: Double, lon: Double, org: String? = null) {
         val arr = pendingPois()
-        arr.put(JSONObject().apply { put("name", name); put("lat", lat); put("lon", lon) })
+        arr.put(JSONObject().apply {
+            put("name", name); put("lat", lat); put("lon", lon)
+            if (!org.isNullOrBlank()) put("org", org)   // pastreaza proiectul pt sync ulterior
+        })
         setPending(arr)
     }
 
@@ -137,6 +252,7 @@ class PoisListActivity : AppCompatActivity() {
         conn.outputStream.use {
             it.write(JSONObject().apply {
                 put("name", p.getString("name")); put("lat", p.getDouble("lat")); put("lon", p.getDouble("lon"))
+                p.optString("org").takeIf { s -> s.isNotBlank() }?.let { o -> put("org", o) }
             }.toString().toByteArray())
         }
         val ok = conn.responseCode in 200..299
@@ -195,12 +311,14 @@ class PoisListActivity : AppCompatActivity() {
         val prefs = getSharedPreferences("bioecho_prefs", MODE_PRIVATE)
         val jwt = prefs.getString("jwt_token", null)
         if (jwt.isNullOrBlank()) {
-            tvStatus.text = "⚠ Nu ești autentificat. Scanează QR pe pagina principală."
+            tvStatus.text = "⚠ Nu ești autentificat — arăt doar punctele locale."
+            renderList()
             return
         }
         Thread {
             try {
-                val url = URL(BuildConfig.SERVER_URL + "/api/pois/mobile")
+                val orgQ = selectedOrg?.let { "?org=$it" } ?: ""   // filtreaza pe proiectul ales
+                val url = URL(BuildConfig.SERVER_URL + "/api/pois/mobile" + orgQ)
                 val conn = url.openConnection() as HttpURLConnection
                 conn.setRequestProperty("Authorization", "Bearer $jwt")
                 conn.setRequestProperty("Accept", "application/json")
@@ -227,7 +345,12 @@ class PoisListActivity : AppCompatActivity() {
                 }
                 conn.disconnect()
             } catch (e: Exception) {
-                runOnUiThread { tvStatus.text = "⚠ Eroare rețea: ${e.message}" }
+                runOnUiThread {
+                    val pend = pendingPois().length()
+                    tvStatus.text = "📡 Offline — arăt ce am local" +
+                        (if (pend > 0) "  ·  ⏳ $pend în așteptare" else "")
+                    renderList()   // arata coada offline chiar fara server
+                }
             }
         }.start()
     }
@@ -278,10 +401,12 @@ class PoisListActivity : AppCompatActivity() {
     }
 
     private fun renderList() {
-        val items = pois.map { p ->
+        displayed = pois + pendingForDisplay()   // server + coada offline, randate impreuna
+        val items = displayed.map { p ->
             val lat = p.getDouble("lat")
             val lon = p.getDouble("lon")
             val name = p.getString("name")
+            val isPend = p.optBoolean("_pending")
             val tags = p.optJSONArray("tags")
             val tagStr = (0 until (tags?.length() ?: 0)).joinToString(", ") { tags!!.getString(it) }
 
@@ -293,26 +418,42 @@ class PoisListActivity : AppCompatActivity() {
                 else "%.1f km".format(m / 1000)
             } ?: "—"
 
-            "📍  $name\n     $distStr · ${lat.format(5)}, ${lon.format(5)}" +
+            (if (isPend) "⏳  $name  (nesincronizat)" else "📍  $name") +
+                "\n     $distStr · ${lat.format(5)}, ${lon.format(5)}" +
                 (if (tagStr.isNotEmpty()) "\n     $tagStr" else "")
         }
         listView.adapter = object : ArrayAdapter<String>(this,
             android.R.layout.simple_list_item_1, items) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val v = super.getView(position, convertView, parent)
-                (v as TextView).setTextColor(0xFFE0E0E0.toInt())
+                val pend = displayed.getOrNull(position)?.optBoolean("_pending") == true
+                (v as TextView).setTextColor(if (pend) 0xFFFFB74D.toInt() else 0xFFE0E0E0.toInt())
                 v.textSize = 13f
                 return v
             }
         }
         listView.setOnItemClickListener { _, _, position, _ ->
-            val p = pois[position]
+            val p = displayed[position]
             startActivity(Intent(this, CompassActivity::class.java).apply {
                 putExtra("lat", p.getDouble("lat"))
                 putExtra("lon", p.getDouble("lon"))
                 putExtra("name", p.getString("name"))
             })
         }
+    }
+
+    /** Punctele din coada offline (pending_pois) ca sa fie VIZIBILE + navigabile chiar fara semnal.
+     *  Filtrate pe proiectul selectat (cele fara org apar doar sub 'Toate proiectele'). */
+    private fun pendingForDisplay(): List<JSONObject> {
+        val arr = pendingPois(); val out = mutableListOf<JSONObject>()
+        for (i in 0 until arr.length()) {
+            val p = arr.getJSONObject(i)
+            val org = p.optString("org").ifBlank { null }
+            if (selectedOrg == null || org == selectedOrg) {
+                out.add(JSONObject(p.toString()).apply { put("_pending", true) })
+            }
+        }
+        return out
     }
 
     private fun Double.format(decimals: Int) = "%.${decimals}f".format(this)
@@ -322,6 +463,101 @@ class PoisListActivity : AppCompatActivity() {
         startActivityForResult(
             Intent(this, MapActivity::class.java).putExtra("pick_mode", true), 400)
     }
+
+    // ── Import / Export KMZ (interschimb POI cu harta web sau alte unelte) ──
+    private fun importKmz() {
+        try {
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
+            }, 500)
+        } catch (_: Exception) {
+            Toast.makeText(this, "Nu pot deschide selectorul de fisiere", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun importFromUri(uri: Uri) {
+        Thread {
+            try {
+                val bytes = contentResolver.openInputStream(uri)?.readBytes()
+                if (bytes == null) { runOnUiThread { Toast.makeText(this, "Nu pot citi fisierul", Toast.LENGTH_SHORT).show() }; return@Thread }
+                // KMZ = zip (semnatura "PK"); altfel KML direct
+                val kml: String? = if (bytes.size >= 2 && bytes[0] == 'P'.code.toByte() && bytes[1] == 'K'.code.toByte()) {
+                    var found: String? = null
+                    java.util.zip.ZipInputStream(bytes.inputStream()).use { zis ->
+                        var e = zis.nextEntry
+                        while (e != null) {
+                            if (e.name.endsWith(".kml", true)) { found = zis.readBytes().toString(Charsets.UTF_8); break }
+                            e = zis.nextEntry
+                        }
+                    }
+                    found
+                } else String(bytes, Charsets.UTF_8)
+                if (kml == null) { runOnUiThread { Toast.makeText(this, "KMZ fara doc.kml", Toast.LENGTH_SHORT).show() }; return@Thread }
+                val pts = parseKmlPlacemarks(kml)
+                runOnUiThread {
+                    if (pts.isEmpty()) { Toast.makeText(this, "Niciun punct in fisier", Toast.LENGTH_SHORT).show(); return@runOnUiThread }
+                    for ((name, lat, lon) in pts) enqueuePoi(name, lat, lon, selectedOrg)
+                    renderList()          // apar imediat ca ⏳
+                    syncPendingPois()     // urca acum daca ai net, altfel raman in coada
+                    Toast.makeText(this, "✓ Import: ${pts.size} puncte (proiect: ${selectedOrg ?: "toate"})", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) { runOnUiThread { Toast.makeText(this, "Eroare import: ${e.message}", Toast.LENGTH_LONG).show() } }
+        }.start()
+    }
+
+    private fun parseKmlPlacemarks(kml: String): List<Triple<String, Double, Double>> {
+        val out = mutableListOf<Triple<String, Double, Double>>()
+        val pm = Regex("<Placemark\\b.*?</Placemark>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+        val nameRe = Regex("<name>\\s*(.*?)\\s*</name>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+        val coordRe = Regex("<coordinates>\\s*(.*?)\\s*</coordinates>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+        for (m in pm.findAll(kml)) {
+            val block = m.value
+            val coord = coordRe.find(block)?.groupValues?.get(1)?.trim() ?: continue
+            val first = coord.split(Regex("\\s+")).firstOrNull() ?: continue
+            val parts = first.split(",")
+            if (parts.size < 2) continue
+            val lon = parts[0].toDoubleOrNull() ?: continue
+            val lat = parts[1].toDoubleOrNull() ?: continue
+            val name = nameRe.find(block)?.groupValues?.get(1)?.let { unescapeXml(it) }?.ifBlank { null } ?: "POI"
+            out.add(Triple(name, lat, lon))
+        }
+        return out
+    }
+
+    private fun exportKmz() {
+        val items = pois + pendingForDisplay()
+        if (items.isEmpty()) { Toast.makeText(this, "Nu ai POI de exportat", Toast.LENGTH_SHORT).show(); return }
+        Thread {
+            try {
+                val dir = Storage.baseDir(this)
+                val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+                val f = File(dir, "POI-export-$ts.kmz")
+                java.util.zip.ZipOutputStream(f.outputStream()).use { zos ->
+                    zos.putNextEntry(java.util.zip.ZipEntry("doc.kml"))
+                    zos.write(buildKml(items).toByteArray(Charsets.UTF_8))
+                    zos.closeEntry()
+                }
+                runOnUiThread { Toast.makeText(this, "✓ Exportat ${items.size} POI → /BioEcho/${f.name}", Toast.LENGTH_LONG).show() }
+            } catch (e: Exception) { runOnUiThread { Toast.makeText(this, "Eroare export: ${e.message}", Toast.LENGTH_LONG).show() } }
+        }.start()
+    }
+
+    private fun buildKml(items: List<JSONObject>): String {
+        val sb = StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<kml xmlns=\"http://www.opengis.net/kml/2.2\">\n<Document>\n")
+        for (p in items) {
+            val lat = p.optDouble("lat", Double.NaN); val lon = p.optDouble("lon", Double.NaN)
+            if (lat.isNaN() || lon.isNaN()) continue
+            val name = escapeXml(p.optString("name", "POI"))
+            sb.append("  <Placemark><name>$name</name><Point><coordinates>$lon,$lat,0</coordinates></Point></Placemark>\n")
+        }
+        sb.append("</Document>\n</kml>\n")
+        return sb.toString()
+    }
+
+    private fun escapeXml(s: String) = s.replace("&", "&amp;").replace("<", "&lt;")
+        .replace(">", "&gt;").replace("\"", "&quot;")
+    private fun unescapeXml(s: String) = s.replace("&lt;", "<").replace("&gt;", ">")
+        .replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -333,6 +569,9 @@ class PoisListActivity : AppCompatActivity() {
                 val lon = data.getDoubleExtra("lon", Double.NaN)
                 if (!lat.isNaN() && !lon.isNaN()) askNameAndNavigate(lat, lon)
             }
+        }
+        if (requestCode == 500 && resultCode == RESULT_OK && data?.data != null) {
+            importFromUri(data.data!!)   // KMZ/KML ales -> importa POI-uri
         }
     }
 
@@ -368,21 +607,21 @@ class PoisListActivity : AppCompatActivity() {
     private fun savePoi(name: String, lat: Double, lon: Double) {
         val jwt = getSharedPreferences("bioecho_prefs", MODE_PRIVATE).getString("jwt_token", null)
         if (jwt.isNullOrBlank()) {
-            enqueuePoi(name, lat, lon)
+            enqueuePoi(name, lat, lon, selectedOrg)
             Toast.makeText(this, "💾 Salvat local: $name (neautentificat — se trimite după login)", Toast.LENGTH_LONG).show()
             tvStatus.text = "⏳ ${pendingPois().length()} punct(e) în așteptare (offline)"
             return
         }
         Thread {
             val ok = try {
-                postPoi(JSONObject().apply { put("name", name); put("lat", lat); put("lon", lon) }, jwt)
+                postPoi(JSONObject().apply { put("name", name); put("lat", lat); put("lon", lon); selectedOrg?.let { put("org", it) } }, jwt)
             } catch (_: Exception) { false }
             runOnUiThread {
                 if (ok) {
                     Toast.makeText(this, "✓ Punct salvat: $name", Toast.LENGTH_SHORT).show()
                     loadPois()
                 } else {
-                    enqueuePoi(name, lat, lon)
+                    enqueuePoi(name, lat, lon, selectedOrg)
                     Toast.makeText(this, "📡 Fără net — salvat local: $name. Se sincronizează automat când ai internet.", Toast.LENGTH_LONG).show()
                     tvStatus.text = "⏳ ${pendingPois().length()} punct(e) în așteptare (offline)"
                 }
