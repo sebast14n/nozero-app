@@ -86,11 +86,14 @@ object RecordWindow {
     // Trei ferestre care se pot activa independent (union): inregistreaza daca ORICARE e activa.
     //  - Dimineata: [rasarit - beforeH, rasarit + afterH]  (continuu)
     //  - Seara:     [apus - beforeH, apus + afterH]        (continuu)
-    //  - Noapte:    intre apus si rasarit, ciclu onMin ON / offMin OFF (offMin=0 => toata noaptea)
+    //  - Noapte:    fereastra [apus + startAfterSunsetH, rasarit - endBeforeSunriseH] (relativa la apus/rasarit,
+    //               ca dimineata/seara), cu ciclu onMin ON / offMin OFF in interiorul ei (offMin=0 => continuu).
+    //               start=0 & end=0 => toata noaptea (apus->rasarit), compatibil cu comportamentul vechi.
     data class Schedule(
         val morningOn: Boolean, val morningBeforeH: Double, val morningAfterH: Double,
         val eveningOn: Boolean, val eveningBeforeH: Double, val eveningAfterH: Double,
-        val nightOn: Boolean, val nightOnMin: Int, val nightOffMin: Int
+        val nightOn: Boolean, val nightOnMin: Int, val nightOffMin: Int,
+        val nightStartAfterSunsetH: Double = 0.0, val nightEndBeforeSunriseH: Double = 0.0
     ) {
         companion object {
             // implicit = toata noaptea continuu (apropiat de comportamentul vechi, fara buffer)
@@ -114,9 +117,12 @@ object RecordWindow {
         if (sch.morningOn && inWin(sunrise, (sch.morningBeforeH * 60).toInt(), (sch.morningAfterH * 60).toInt())) return true
         if (sch.eveningOn && inWin(sunset, (sch.eveningBeforeH * 60).toInt(), (sch.eveningAfterH * 60).toInt())) return true
         if (sch.nightOn) {
-            val isDark = if (sunset > sunrise) (nowMin >= sunset || nowMin < sunrise) else (nowMin in sunset until sunrise)
-            if (isDark) {
-                val since = ((nowMin - sunset) + 1440) % 1440
+            // fereastra de noapte relativa la apus/rasarit (ca dimineata/seara)
+            val nStart = (sunset + (sch.nightStartAfterSunsetH * 60).toInt() + 1440) % 1440   // start = apus + startAfterSunsetH
+            val nEnd = (sunrise - (sch.nightEndBeforeSunriseH * 60).toInt() + 1440) % 1440    // end   = rasarit - endBeforeSunriseH
+            val inNight = if (nStart <= nEnd) nowMin in nStart until nEnd else (nowMin >= nStart || nowMin < nEnd)
+            if (inNight) {
+                val since = ((nowMin - nStart) + 1440) % 1440   // ciclul curge de la startul ferestrei
                 val cycle = sch.nightOnMin + sch.nightOffMin
                 if (cycle <= 0) return true
                 if (since % cycle < sch.nightOnMin) return true
@@ -132,7 +138,8 @@ object RecordWindow {
             return Schedule(
                 prefs.getBoolean("sch_m_on", false), prefs.getFloat("sch_m_before", 0.5f).toDouble(), prefs.getFloat("sch_m_after", 2f).toDouble(),
                 prefs.getBoolean("sch_e_on", false), prefs.getFloat("sch_e_before", 1f).toDouble(), prefs.getFloat("sch_e_after", 1f).toDouble(),
-                prefs.getBoolean("sch_n_on", true), prefs.getInt("sch_n_onmin", 5), prefs.getInt("sch_n_off", 0)
+                prefs.getBoolean("sch_n_on", true), prefs.getInt("sch_n_onmin", 5), prefs.getInt("sch_n_off", 0),
+                prefs.getFloat("sch_n_start", 0f).toDouble(), prefs.getFloat("sch_n_end", 0f).toDouble()
             )
         } catch (e: Exception) {
             return null   // prefs corupte (bug vechi: cheia sch_n_on scrisa si ca Int) -> foloseste DEFAULT
@@ -145,6 +152,7 @@ object RecordWindow {
             .putBoolean("sch_m_on", s.morningOn).putFloat("sch_m_before", s.morningBeforeH.toFloat()).putFloat("sch_m_after", s.morningAfterH.toFloat())
             .putBoolean("sch_e_on", s.eveningOn).putFloat("sch_e_before", s.eveningBeforeH.toFloat()).putFloat("sch_e_after", s.eveningAfterH.toFloat())
             .putBoolean("sch_n_on", s.nightOn).putInt("sch_n_onmin", s.nightOnMin).putInt("sch_n_off", s.nightOffMin)
+            .putFloat("sch_n_start", s.nightStartAfterSunsetH.toFloat()).putFloat("sch_n_end", s.nightEndBeforeSunriseH.toFloat())
             .apply()
     }
 }

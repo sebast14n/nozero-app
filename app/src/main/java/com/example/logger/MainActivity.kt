@@ -765,14 +765,16 @@ class MainActivity : AppCompatActivity() {
         val mB = num(cur.morningBeforeH.toString()); val mA = num(cur.morningAfterH.toString())
         val cbE = CheckBox(this).apply { text = "🌆 Seară"; isChecked = cur.eveningOn }
         val eB = num(cur.eveningBeforeH.toString()); val eA = num(cur.eveningAfterH.toString())
-        val cbN = CheckBox(this).apply { text = "🌙 Noapte (interval)"; isChecked = cur.nightOn }
+        val cbN = CheckBox(this).apply { text = "🌙 Noapte"; isChecked = cur.nightOn }
         val nOn = num(cur.nightOnMin.toString()); val nOff = num(cur.nightOffMin.toString())
+        val nStart = num(cur.nightStartAfterSunsetH.toString()); val nEnd = num(cur.nightEndBeforeSunriseH.toString())
         val preview = TextView(this).apply { setPadding(0, dp(10), 0, dp(4)); textSize = 15f }
 
         fun readSch() = RecordWindow.Schedule(
             cbM.isChecked, mB.text.toString().toDoubleOrNull() ?: 0.0, mA.text.toString().toDoubleOrNull() ?: 0.0,
             cbE.isChecked, eB.text.toString().toDoubleOrNull() ?: 0.0, eA.text.toString().toDoubleOrNull() ?: 0.0,
-            cbN.isChecked, nOn.text.toString().toIntOrNull() ?: 0, nOff.text.toString().toIntOrNull() ?: 0)
+            cbN.isChecked, nOn.text.toString().toIntOrNull() ?: 0, nOff.text.toString().toIntOrNull() ?: 0,
+            nStart.text.toString().toDoubleOrNull() ?: 0.0, nEnd.text.toString().toDoubleOrNull() ?: 0.0)
         fun refresh() {
             val c = Calendar.getInstance()
             val active = RecordWindow.scheduleActive(c, lat, lon, readSch())
@@ -785,13 +787,14 @@ class MainActivity : AppCompatActivity() {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
         }
-        listOf(mB, mA, eB, eA, nOn, nOff).forEach { it.addTextChangedListener(watcher) }
+        listOf(mB, mA, eB, eA, nOn, nOff, nStart, nEnd).forEach { it.addTextChangedListener(watcher) }
         listOf(cbM, cbE, cbN).forEach { it.setOnCheckedChangeListener { _, _ -> refresh() } }
 
         fun preset(s: RecordWindow.Schedule) {
             cbM.isChecked = s.morningOn; mB.setText(s.morningBeforeH.toString()); mA.setText(s.morningAfterH.toString())
             cbE.isChecked = s.eveningOn; eB.setText(s.eveningBeforeH.toString()); eA.setText(s.eveningAfterH.toString())
-            cbN.isChecked = s.nightOn; nOn.setText(s.nightOnMin.toString()); nOff.setText(s.nightOffMin.toString()); refresh()
+            cbN.isChecked = s.nightOn; nOn.setText(s.nightOnMin.toString()); nOff.setText(s.nightOffMin.toString())
+            nStart.setText(s.nightStartAfterSunsetH.toString()); nEnd.setText(s.nightEndBeforeSunriseH.toString()); refresh()
         }
         fun pbtn(t: String, s: RecordWindow.Schedule) = Button(this).apply {
             text = t; textSize = 11f
@@ -806,7 +809,9 @@ class MainActivity : AppCompatActivity() {
 
         col.addView(cbM); col.addView(row(lbl("răsărit −"), mB, lbl("h  +"), mA, lbl("h")))
         col.addView(cbE); col.addView(row(lbl("apus −"), eB, lbl("h  +"), eA, lbl("h")))
-        col.addView(cbN); col.addView(row(nOn, lbl("min ON  "), nOff, lbl("min OFF  (0=toată noaptea)")))
+        col.addView(cbN)
+        col.addView(row(lbl("apus +"), nStart, lbl("h  →  răsărit −"), nEnd, lbl("h")))
+        col.addView(row(nOn, lbl("min ON  "), nOff, lbl("min OFF  (0=continuu)")))
         col.addView(preview)
         col.addView(TextView(this).apply { text = "🔋 ${batteryReport()}"; setPadding(0, dp(8), 0, 0); textSize = 12f })
         refresh()
