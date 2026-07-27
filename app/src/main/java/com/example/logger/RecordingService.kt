@@ -273,13 +273,17 @@ class RecordingService : Service() {
         // baza fara extensie; recorderul alege .flac sau .wav
         val base = File(sessionDir, "audio_${"%03d".format(segmentIndex)}_$ts")
         // LOSSLESS: WAV implicit (fiabil, = Song Meter); FLAC experimental daca userul a ales
-        val useFlac = getSharedPreferences("bioecho_prefs", MODE_PRIVATE).getString("audio_format", "wav") == "flac"
+        val prefs = getSharedPreferences("bioecho_prefs", MODE_PRIVATE)
+        val useFlac = prefs.getString("audio_format", "wav") == "flac"
+        // gain digital (dB->liniar) + float (fara pierdere pe semnal slab) din calibrarea din Test microfoane
+        val gainLin = Math.pow(10.0, prefs.getFloat("record_gain_db", 0f) / 20.0).toFloat()
+        val useFloat = prefs.getBoolean("record_float", false)
         val mic = resolvePreferredMic()
-        var rec = AudioSegmentRecorder(48000, 1, preferFlac = useFlac).also { it.preferredDevice = mic }
+        var rec = AudioSegmentRecorder(48000, 1, preferFlac = useFlac, preferFloat = useFloat).also { it.preferredDevice = mic; it.gainLinear = gainLin }
         val f = try { rec.start(base) } catch (e: Exception) { null }
         if (f == null && useFlac) {
             // esec FLAC -> reincearca WAV (nu pierdem segmentul)
-            rec = AudioSegmentRecorder(48000, 1, preferFlac = false).also { it.preferredDevice = mic }
+            rec = AudioSegmentRecorder(48000, 1, preferFlac = false, preferFloat = useFloat).also { it.preferredDevice = mic; it.gainLinear = gainLin }
             try { rec.start(base) } catch (_: Exception) {}
         }
         segRec = rec

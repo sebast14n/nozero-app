@@ -43,6 +43,10 @@ class MicTestActivity : AppCompatActivity() {
     private lateinit var levelBar: ProgressBar
     private lateinit var recBtn: Button
     private lateinit var filesTv: TextView
+    private var gainDb = 0                      // gain digital in dB (0..40), aplicat la test + salvat pt inregistrare
+    private lateinit var gainBar: SeekBar
+    private lateinit var gainLabel: TextView
+    private lateinit var floatCheck: CheckBox
 
     private val sources = listOf(
         Triple("Unprocessed", MediaRecorder.AudioSource.UNPROCESSED,
@@ -84,6 +88,42 @@ class MicTestActivity : AppCompatActivity() {
             val i = id - 1000; if (i in sources.indices) selectedSource = sources[i].second
         }
         root.addView(sourceGroup)
+
+        // ── Gain de inregistrare (calibrare nivel) ──
+        val prefs = getSharedPreferences("bioecho_prefs", MODE_PRIVATE)
+        gainDb = prefs.getInt("record_gain_db_int", 0)
+        root.addView(h2("2b. Gain inregistrare (calibrare)"))
+        root.addView(hint("Android NU regleaza gain-ul hardware, deci il compensam digital. Cu un mic extern bun " +
+            "(ex. Rode) semnalul poate fi prea slab. Trage slider-ul si inregistreaza 20s pana varful ajunge la " +
+            "~ −9 dBFS (aproape sus, dar FARA ⚠CLIP). Bifeaza FLOAT pt mic extern / gain mare (pastreaza semnalul " +
+            "slab fara zgomot de cuantizare). Apoi Salveaza — se aplica la transecte, senzor fix si live."))
+        gainLabel = small("Gain: +$gainDb dB")
+        root.addView(gainLabel)
+        gainBar = SeekBar(this).apply {
+            max = 40; progress = gainDb
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, p: Int, u: Boolean) { gainDb = p; gainLabel.text = "Gain: +$p dB" }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) {}
+            })
+        }
+        root.addView(gainBar)
+        floatCheck = CheckBox(this).apply {
+            text = "Inregistreaza pe 32-bit FLOAT (recomandat cu mic extern)"
+            setTextColor(0xFFE0E0E0.toInt()); isChecked = prefs.getBoolean("record_float", false)
+        }
+        root.addView(floatCheck)
+        root.addView(Button(this).apply {
+            text = "💾 Salveaza gain-ul pentru inregistrare"
+            setOnClickListener {
+                prefs.edit()
+                    .putInt("record_gain_db_int", gainDb)
+                    .putFloat("record_gain_db", gainDb.toFloat())
+                    .putBoolean("record_float", floatCheck.isChecked)
+                    .apply()
+                statusTv.text = "✓ Gain +$gainDb dB salvat (float=${floatCheck.isChecked}) — se aplica la inregistrari."
+            }
+        })
 
         root.addView(h2("3. Nota (ce microfon fizic e — ex. „Rode-ME-C”)"))
         noteEdit = EditText(this).apply { setText("mic"); setTextColor(0xFFFFFFFF.toInt()); setHintTextColor(0xFF888888.toInt()) }
@@ -188,16 +228,21 @@ class MicTestActivity : AppCompatActivity() {
             while (recording && written < target) {
                 val n = ar.read(buf, 0, buf.size)
                 if (n <= 0) continue
-                var bi = 0; var sum = 0.0
+                val gl = Math.pow(10.0, gainDb / 20.0).toFloat()   // gain live din slider (per chunk)
+                var bi = 0; var sum = 0.0; var pk = 0
                 for (i in 0 until n) {
-                    val v = buf[i].toInt(); sum += (v * v).toDouble()
+                    var v = (buf[i] * gl).toInt(); if (v > 32767) v = 32767 else if (v < -32768) v = -32768
+                    val av = if (v < 0) -v else v; if (av > pk) pk = av
+                    sum += (v * v).toDouble()
                     bytes[bi++] = (v and 0xff).toByte(); bytes[bi++] = ((v shr 8) and 0xff).toByte()
                 }
                 raf.write(bytes, 0, n * 2); written += n
                 val rms = sqrt(sum / n); val dbfs = if (rms > 0) 20 * log10(rms / 32768.0) else -90.0
-                val pct = (((dbfs + 60) / 60) * 100).coerceIn(0.0, 100.0).toInt()
+                val pkDb = if (pk > 0) 20 * log10(pk / 32768.0) else -90.0
+                val clip = pk >= 32767
+                val pct = (((pkDb + 60) / 60) * 100).coerceIn(0.0, 100.0).toInt()
                 val remain = ((target - written) / sr).toInt()
-                handler.post { levelBar.progress = pct; statusTv.text = "🔴 inregistrez… ${remain}s ramase · nivel ${dbfs.toInt()} dBFS" }
+                handler.post { levelBar.progress = pct; statusTv.text = "🔴 ${remain}s · RMS ${dbfs.toInt()} · varf ${pkDb.toInt()} dBFS" + (if (clip) " ⚠ CLIP!" else "") }
             }
             val dataLen = written * 2
             raf.seek(4); writeIntLE(raf, (36 + dataLen).toInt())

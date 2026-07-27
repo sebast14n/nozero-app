@@ -41,6 +41,29 @@ class AudioSegmentRecorder(
     /** true = raporteaza nivelul semnalului in LiveState pe durata capturii (pt ecranul de monitor). */
     var reportLevel = true
 
+    /**
+     * Gain DIGITAL aplicat inainte de scriere (1f = neutru). Android NU expune gain-ul hardware al
+     * preamplificatorului, deci il compensam digital. Pe 32-bit FLOAT (preferFloat=true) e fara pierdere —
+     * un semnal slab (ex. Rode la −69 dBFS) e ridicat curat, fara zgomot de cuantizare. Pe 16-bit ajuta,
+     * dar amplifica si cuantizarea, deci pt gain mare foloseste FLOAT. Setat de serviciu din preferinte.
+     */
+    var gainLinear: Float = 1f
+
+    private fun applyGainFloat(buf: FloatArray, n: Int) {
+        val g = gainLinear; if (g == 1f) return
+        var i = 0
+        while (i < n) { var v = buf[i] * g; if (v > 1f) v = 1f else if (v < -1f) v = -1f; buf[i] = v; i++ }
+    }
+    private fun applyGain16(buf: ByteArray, nBytes: Int) {
+        val g = gainLinear; if (g == 1f) return
+        var i = 0
+        while (i + 1 < nBytes) {
+            val s = (buf[i].toInt() and 0xff) or (buf[i + 1].toInt() shl 8)   // short LE cu semn
+            var v = (s * g).toInt(); if (v > 32767) v = 32767 else if (v < -32768) v = -32768
+            buf[i] = (v and 0xff).toByte(); buf[i + 1] = ((v shr 8) and 0xff).toByte(); i += 2
+        }
+    }
+
     /** Dispozitivul de intrare pe care AudioRecord chiar il foloseste (dupa rutare). */
     fun routedDevice(): AudioDeviceInfo? =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) try { ar?.routedDevice } catch (_: Exception) { null } else null
@@ -143,6 +166,7 @@ class AudioSegmentRecorder(
                 while (running) {
                     val n = a.read(fbuf, 0, fbuf.size, AudioRecord.READ_BLOCKING)
                     if (n > 0) {
+                        applyGainFloat(fbuf, n)
                         reportFloat(fbuf, n)
                         var bi = 0
                         for (i in 0 until n) {
@@ -159,7 +183,7 @@ class AudioSegmentRecorder(
                 val buf = ByteArray(readChunk)
                 while (running) {
                     val n = a.read(buf, 0, buf.size)
-                    if (n > 0) { report16(buf, n); raf.write(buf, 0, n); dataLen += n }
+                    if (n > 0) { applyGain16(buf, n); report16(buf, n); raf.write(buf, 0, n); dataLen += n }
                 }
             }
             // patch dimensiuni
@@ -215,6 +239,7 @@ class AudioSegmentRecorder(
                 if (running) {
                     val n = a.read(pcm, 0, pcm.size)
                     if (n > 0) {
+                        applyGain16(pcm, n)
                         report16(pcm, n)
                         val inIdx = codec.dequeueInputBuffer(10_000)
                         if (inIdx >= 0) {
