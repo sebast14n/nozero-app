@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Looper
+import android.telephony.*
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.core.content.ContextCompat
@@ -15,6 +16,7 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
@@ -109,6 +111,47 @@ class NZBridge(private val activity: Activity, private val web: WebView) {
         o.put("email", prefs.getString("email", null) ?: JSONObject.NULL)
         o.put("native", true)
         return o.toString()
+    }
+
+    /** Celulele mobile vizibile (serving + vecine). Intoarce DOAR campuri BRUTE; benzile
+     *  (earfcn->B3, nrarfcn->n78 etc.) se deriva in JS (modulul signal, PORT #1), nu in Kotlin.
+     *  Contract de chei citit de parseCells() din modulul web — a NU se redenumi. */
+    @SuppressLint("MissingPermission")
+    @JavascriptInterface
+    fun readCells(): String {
+        val tm = activity.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+            ?: return """{"error":"no_telephony"}"""
+        if (!hasLocPerm()) return """{"error":"perm_location"}"""   // getAllCellInfo cere ACCESS_FINE_LOCATION
+        val cells = JSONArray()
+        try {
+            for (ci in (tm.allCellInfo ?: emptyList<CellInfo>())) {
+                val o = JSONObject(); o.put("registered", ci.isRegistered)
+                when (ci) {
+                    is CellInfoLte -> { val s = ci.cellSignalStrength; val id = ci.cellIdentity
+                        o.put("rat", "4G"); o.put("rsrp", s.rsrp); o.put("rsrq", s.rsrq); o.put("rssi", s.rssi)
+                        o.put("pci", id.pci); o.put("ci", id.ci); o.put("tac", id.tac); o.put("earfcn", id.earfcn)
+                        o.put("mcc", id.mccString); o.put("mnc", id.mncString)
+                        o.put("operator", id.operatorAlphaLong?.toString()) }
+                    is CellInfoNr -> { val s = ci.cellSignalStrength as CellSignalStrengthNr
+                        val id = ci.cellIdentity as CellIdentityNr
+                        o.put("rat", "5G"); o.put("rsrp", s.ssRsrp); o.put("rsrq", s.ssRsrq)
+                        o.put("pci", id.pci); o.put("nci", id.nci); o.put("tac", id.tac); o.put("nrarfcn", id.nrarfcn)
+                        o.put("mcc", id.mccString); o.put("mnc", id.mncString)
+                        o.put("operator", id.operatorAlphaLong?.toString()) }
+                    is CellInfoWcdma -> { val s = ci.cellSignalStrength; val id = ci.cellIdentity
+                        o.put("rat", "3G"); o.put("rssi", s.dbm); o.put("psc", id.psc); o.put("cid", id.cid)
+                        o.put("lac", id.lac); o.put("uarfcn", id.uarfcn)
+                        o.put("mcc", id.mccString); o.put("mnc", id.mncString)
+                        o.put("operator", id.operatorAlphaLong?.toString()) }
+                    is CellInfoGsm -> { val s = ci.cellSignalStrength; val id = ci.cellIdentity
+                        o.put("rat", "2G"); o.put("rssi", s.dbm); o.put("cid", id.cid); o.put("lac", id.lac)
+                        o.put("arfcn", id.arfcn); o.put("mcc", id.mccString); o.put("mnc", id.mncString)
+                        o.put("operator", id.operatorAlphaLong?.toString()) }
+                }
+                cells.put(o)
+            }
+        } catch (e: SecurityException) { return """{"error":"perm_denied"}""" }
+        return JSONObject().put("cells", cells).toString()
     }
 
     @JavascriptInterface

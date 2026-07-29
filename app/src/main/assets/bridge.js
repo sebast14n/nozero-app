@@ -26,6 +26,7 @@
       getLocation: function (ok, err) { onceQ.push({ ok: ok, err: err }); window.NZAndroid.getLocationOnce(); },
       getIdentity: function () { try { return JSON.parse(window.NZAndroid.getIdentity()); } catch (e) { return { native: true }; } },
       loadModule: function (name) { window.NZAndroid.loadModule(String(name)); },
+      readCells: function () { try { return JSON.parse(window.NZAndroid.readCells()); } catch (e) { return { error: String(e) }; } },
       log: function (m) { try { window.NZAndroid.log(String(m)); } catch (e) {} }
     };
   }

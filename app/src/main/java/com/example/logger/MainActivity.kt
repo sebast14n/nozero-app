@@ -41,12 +41,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnFindSensor: Button
     private lateinit var btnDiagnostic: Button
     private lateinit var btnRotatie: Button
+    private lateinit var btnSignal: Button
     private lateinit var tvStatus: TextView
     private lateinit var tvUploadStatus: TextView
     private lateinit var tvPath: TextView
 
     private lateinit var uploadManager: UploadManager
     private val PERMISSIONS_REQUEST = 100
+    private val SIGNAL_PERMS_REQUEST = 101
     private var isFixedPoint = true  // default: senzor fix (GPS oprit dupa primul fix)
     private var pendingFixed = true  // ce mod a initiat cererea de permisiuni
     private var mediaPlayer: android.media.MediaPlayer? = null
@@ -73,6 +75,7 @@ class MainActivity : AppCompatActivity() {
         btnFindSensor    = findViewById(R.id.btnFindSensor)
         btnDiagnostic    = findViewById(R.id.btnDiagnostic)
         btnRotatie       = findViewById(R.id.btnRotatie)
+        btnSignal        = findViewById(R.id.btnSignal)
         tvStatus      = findViewById(R.id.tvStatus)
         tvUploadStatus = findViewById(R.id.tvUploadStatus)
         tvPath        = findViewById(R.id.tvPath)
@@ -122,6 +125,8 @@ class MainActivity : AppCompatActivity() {
             val url = BuildConfig.SERVER_URL + "/static/modules/rotatie/index.html" + (if (tok.isNotBlank()) "#tok=$tok" else "")
             startActivity(Intent(this, WebActivity::class.java).putExtra("url", url))
         }
+        // Modul web „Semnal / Acoperire" (scouting retea celulara) — necesita readCells() nativ
+        btnSignal.setOnClickListener { launchSignal() }
 
         // Solicita exceptare de la battery optimization la prima rulare
         requestBatteryOptimizationExemption()
@@ -591,8 +596,30 @@ class MainActivity : AppCompatActivity() {
         else checkGpsAndStart()                  // transect: GPS necesar pentru traseu
     }
 
+    /** Modul „Semnal / Acoperire": cere locatie + stare telefon (getAllCellInfo le cere) apoi deschide
+     *  modulul web. readCells() cade elegant pe {"error":"perm_location"} daca sunt refuzate. */
+    private fun launchSignal() {
+        val perms = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.READ_PHONE_STATE
+        )
+        val missing = perms.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) openSignalModule()
+        else ActivityCompat.requestPermissions(this, missing.toTypedArray(), SIGNAL_PERMS_REQUEST)
+    }
+
+    private fun openSignalModule() {
+        val tok = getSharedPreferences(PREFS, MODE_PRIVATE).getString("jwt_token", "") ?: ""
+        val url = BuildConfig.SERVER_URL + "/static/modules/signal/index.html" + (if (tok.isNotBlank()) "#tok=$tok" else "")
+        startActivity(Intent(this, WebActivity::class.java).putExtra("url", url))
+    }
+
     override fun onRequestPermissionsResult(code: Int, perms: Array<String>, results: IntArray) {
         super.onRequestPermissionsResult(code, perms, results)
+        // Modulul Semnal: deschide oricum (readCells cade elegant daca lipsesc permisiuni)
+        if (code == SIGNAL_PERMS_REQUEST) { openSignalModule(); return }
         if (code == PERMISSIONS_REQUEST) {
             // Esentiale: audio + locatie. BLUETOOTH_SCAN / notificari sunt optionale
             // (anti-intruziunea BLE merge fara, doar nu scaneaza) -> nu blocam sesiunea.
