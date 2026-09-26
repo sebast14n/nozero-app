@@ -1,7 +1,9 @@
 package com.example.logger
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.media.AudioFormat
@@ -70,6 +72,11 @@ class LiveListenActivity : AppCompatActivity() {
     private val modelFile get() = File(modelDir, "model.tflite")
     private val labelsFile get() = File(modelDir, "labels.txt")
     private val allowedFile get() = File(modelDir, "allowed_ro.txt")   // filtru specii Romania
+    // Filtru pe LOCATIA curenta (zona + saptamana), luat de la server la fiecare pornire; daca
+    // lipseste (offline, zona neacoperita) ramane lista pe toata Romania.
+    private val localAllowedFile get() = File(modelDir, "allowed_loc.txt")
+    @Volatile private var zoneLabel = ""
+    private lateinit var spectro: SpectroView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -109,6 +116,13 @@ class LiveListenActivity : AppCompatActivity() {
         }
         root.addView(btnRec, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply {
             topMargin = dp(8)
+        })
+
+        // Cascada spectrului (0-12 kHz, ~30 s): se vede ce aude microfonul CHIAR acum,
+        // nu doar ce crede modelul. Se umple din firul audio, in audioLoop().
+        spectro = SpectroView(this)
+        root.addView(spectro, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(120)).apply {
+            topMargin = dp(10)
         })
 
         root.addView(TextView(this).apply {
@@ -198,7 +212,10 @@ class LiveListenActivity : AppCompatActivity() {
         // 1) modelul (mapare + init interpreter) — pe acest thread, nu pe UI
         if (classifier == null) {
             try {
-                classifier = BirdNetClassifier.load(modelFile, labelsFile, allowedFile, threads = 2)
+                // filtrul pe locatie (zona + saptamana), daca serverul il da; altfel toata Romania
+                refreshLocalAllowlist()
+                val filt = if (localAllowedFile.exists() && localAllowedFile.length() > 0) localAllowedFile else allowedFile
+                classifier = BirdNetClassifier.load(modelFile, labelsFile, filt, threads = 2)
             } catch (e: Exception) {
                 runOnUiThread {
                     tvStatus.text = "⚠ Nu pot încărca modelul: ${e.message?.take(80)}"
@@ -239,11 +256,12 @@ class LiveListenActivity : AppCompatActivity() {
         val pcm = ShortArray(4800)   // ~0.1 s
         try {
             rec.startRecording()
-            runOnUiThread { if (listening) tvStatus.text = "🔴 Ascult…" }
+            runOnUiThread { if (listening) tvStatus.text = "🔴 Ascult…" + (if (zoneLabel.isNotBlank()) "  ·  $zoneLabel" else "  ·  specii: România") }
             while (listening) {
                 val n = rec.read(pcm, 0, pcm.size)
                 if (n <= 0) continue
                 if (recording) writePcmToWav(pcm, n)
+                spectro.push(pcm, n)                      // cascada: o coloana per bloc (~10/s)
                 for (i in 0 until n) {
                     ring[pos] = pcm[i].toFloat() / 32768f
                     pos = (pos + 1) % WIN
@@ -461,6 +479,32 @@ class LiveListenActivity : AppCompatActivity() {
                 }
             }
         }.start()
+    }
+
+    /** Lista de specii pentru LOCUL in care suntem (zona + saptamana), de la server. Se ruleaza pe
+     *  firul audio inainte de incarcarea modelului; cel mult ~4 s daca reteaua e slaba. Fara
+     *  locatie sau fara raspuns -> lasa fisierul vechi (daca exista) sau nimic (-> lista RO). */
+    private fun refreshLocalAllowlist() {
+        try {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) return
+            val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            val loc = try { lm.getLastKnownLocation(LocationManager.GPS_PROVIDER) } catch (_: Exception) { null }
+                ?: try { lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER) } catch (_: Exception) { null }
+                ?: return
+            val url = URL(BuildConfig.SERVER_URL + "/api/birdnet/allowed?lat=%.5f&lon=%.5f".format(Locale.US, loc.latitude, loc.longitude))
+            val conn = url.openConnection() as HttpURLConnection
+            try {
+                conn.connectTimeout = 4000; conn.readTimeout = 4000
+                if (conn.responseCode != 200) return               // 404 = zona neacoperita -> RO
+                val body = conn.inputStream.bufferedReader().readText()
+                if (body.lines().count { it.trim().isNotEmpty() } < 20) return   // lista suspect de mica
+                localAllowedFile.writeText(body)
+                val zona = conn.getHeaderField("X-Zone") ?: ""
+                val n = conn.getHeaderField("X-Species-Count") ?: ""
+                zoneLabel = "specii: $zona ($n)"
+            } finally { conn.disconnect() }
+        } catch (_: Exception) { /* offline: ramane ce era */ }
     }
 
     private fun downloadTo(urlStr: String, dest: File, onProgress: (Long, Long) -> Unit) {

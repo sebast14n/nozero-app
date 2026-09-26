@@ -42,6 +42,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnDiagnostic: Button
     private lateinit var btnRotatie: Button
     private lateinit var btnSignal: Button
+    private lateinit var btnVreme: Button
     private lateinit var tvStatus: TextView
     private lateinit var tvUploadStatus: TextView
     private lateinit var tvPath: TextView
@@ -76,6 +77,7 @@ class MainActivity : AppCompatActivity() {
         btnDiagnostic    = findViewById(R.id.btnDiagnostic)
         btnRotatie       = findViewById(R.id.btnRotatie)
         btnSignal        = findViewById(R.id.btnSignal)
+        btnVreme         = findViewById(R.id.btnVreme)
         tvStatus      = findViewById(R.id.tvStatus)
         tvUploadStatus = findViewById(R.id.tvUploadStatus)
         tvPath        = findViewById(R.id.tvPath)
@@ -127,6 +129,10 @@ class MainActivity : AppCompatActivity() {
         }
         // Modul web „Semnal / Acoperire" (scouting retea celulara) — necesita readCells() nativ
         btnSignal.setOnClickListener { launchSignal() }
+        // Vreme: radar de precipitatii (RainViewer) centrat pe locatia curenta — modul web
+        btnVreme.setOnClickListener { openWebModule("vreme") }
+        // Easter egg: apasare lunga pe starea de sus -> un puzzle, pentru asteptarile lungi din teren
+        tvStatus.setOnLongClickListener { openWebModule("joc"); true }
 
         // Solicita exceptare de la battery optimization la prima rulare
         requestBatteryOptimizationExemption()
@@ -598,6 +604,13 @@ class MainActivity : AppCompatActivity() {
 
     /** Modul „Semnal / Acoperire": cere locatie + stare telefon (getAllCellInfo le cere) apoi deschide
      *  modulul web. readCells() cade elegant pe {"error":"perm_location"} daca sunt refuzate. */
+    /** Deschide un modul web din /static/modules/<nume>/ in WebView, cu JWT-ul in #tok. */
+    private fun openWebModule(name: String) {
+        val tok = getSharedPreferences(PREFS, MODE_PRIVATE).getString("jwt_token", "") ?: ""
+        val url = BuildConfig.SERVER_URL + "/static/modules/$name/index.html" + (if (tok.isNotBlank()) "#tok=$tok" else "")
+        startActivity(Intent(this, WebActivity::class.java).putExtra("url", url))
+    }
+
     private fun launchSignal() {
         val perms = mutableListOf(
             Manifest.permission.ACCESS_FINE_LOCATION,

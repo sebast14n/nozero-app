@@ -33,6 +33,8 @@ class AudioSegmentRecorder(
     private var ar: AudioRecord? = null
     private var bytesPerSample = 2          // 2 = PCM 16-bit, 4 = float 32-bit
     private var isFloat = false             // true cand inregistram pe 32-bit float (WAV)
+    /** Formatul OBTINUT (nu cel cerut): serviciul compara cu preferinta si avertizeaza daca difera. */
+    val isFloatFormat: Boolean get() = isFloat
     var outFile: File? = null; private set
 
     /** Microfon preferat (setat inainte de start() de catre serviciu); null = ruteaza sistemul. */

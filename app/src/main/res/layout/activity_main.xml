@@ -189,6 +189,16 @@
         android:backgroundTint="#00695C"
         android:layout_marginBottom="12dp"/>
 
+    <Button
+        android:id="@+id/btnVreme"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="🌧 VREME / RADAR"
+        android:textSize="14sp"
+        android:textColor="#FFFFFF"
+        android:backgroundTint="#37474F"
+        android:layout_marginBottom="12dp"/>
+
     <TextView
         android:id="@+id/tvUploadStatus"
         android:layout_width="match_parent"

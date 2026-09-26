@@ -35,7 +35,11 @@ class MonitorActivity : AppCompatActivity() {
     private lateinit var dbTv: TextView
     private lateinit var micTv: TextView
     private lateinit var statsTv: TextView
+    private lateinit var battTv: TextView
+    private lateinit var warnTv: TextView
     private var silenceSince = 0L
+    private var battReadMs = 0L
+    private var battText = "…"
 
     private val tick = object : Runnable {
         override fun run() { refresh(); ui.postDelayed(this, 60L) }
@@ -74,6 +78,19 @@ class MonitorActivity : AppCompatActivity() {
             textSize = 13f; setPadding(0, dp(18), 0, 0); setTextColor(0xFF666666.toInt())
         }
         root.addView(statsTv)
+
+        // Bateria: nivel + curentul CHIAR acum (se incarca sau se consuma, si cat). Citit direct
+        // din BatteryManager, o data pe secunda — nu prin serviciu, ca sa mearga si fara sesiune.
+        root.addView(label("Baterie"))
+        battTv = TextView(this).apply { textSize = 16f; setPadding(0, dp(2), 0, dp(6)) }
+        root.addView(battTv)
+
+        // Avertisment: formatul/microfonul obtinut difera de ce s-a cerut in setari.
+        warnTv = TextView(this).apply {
+            textSize = 14f; setTextColor(0xFFFB8C00.toInt()); setPadding(0, dp(10), 0, 0)
+            setTypeface(typeface, android.graphics.Typeface.BOLD); visibility = android.view.View.GONE
+        }
+        root.addView(warnTv)
 
         val scroll = ScrollView(this); scroll.addView(root)
         setContentView(scroll)
@@ -128,6 +145,31 @@ class MonitorActivity : AppCompatActivity() {
         statsTv.text = "Mod: ${LiveState.mode}${if (LiveState.scheduled) " · program nocturn" else ""}\n" +
             "Segmente: ${LiveState.segmentCount} · ${LiveState.sampleRate / 1000} kHz\n" +
             "Sesiune: ${fmtDur(el)} · liber pe card: $free"
+
+        // bateria: o citire pe secunda e destul (tick-ul e la 60 ms)
+        val now = System.currentTimeMillis()
+        if (now - battReadMs > 1000L) { battReadMs = now; battText = readBattery() }
+        battTv.text = battText
+
+        val w = LiveState.formatWarning
+        warnTv.text = w
+        warnTv.visibility = if (active && w.isNotBlank()) android.view.View.VISIBLE else android.view.View.GONE
+    }
+
+    /** Nivel + curent instantaneu. Unele telefoane raporteaza in mA, altele in µA, iar semnul
+     *  nu e garantat — de aceea directia vine din starea „se incarca", nu din semn, iar
+     *  unitatea se deduce din marime (peste 20 000 nu poate fi mA pe un telefon). */
+    private fun readBattery(): String {
+        val bm = getSystemService(Context.BATTERY_SERVICE) as? android.os.BatteryManager ?: return "—"
+        val lvl = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        val raw = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
+        val bi = registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+        val st = bi?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val charging = st == android.os.BatteryManager.BATTERY_STATUS_CHARGING || st == android.os.BatteryManager.BATTERY_STATUS_FULL
+        val mA = if (kotlin.math.abs(raw) > 20_000) raw / 1000 else raw
+        val cur = kotlin.math.abs(mA)
+        val dir = if (charging) "⚡ se încarcă" else "🔻 consumă"
+        return "🔋 $lvl%   ·   $dir  ${if (raw == Int.MIN_VALUE || raw == 0) "?" else "$cur mA"}"
     }
 
     /** Lista microfoanelor de intrare -> alegere -> pref + comanda catre serviciu (segment rulat). */

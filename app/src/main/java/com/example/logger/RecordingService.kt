@@ -288,6 +288,16 @@ class RecordingService : Service() {
         }
         segRec = rec
         LiveState.segmentCount++
+        // Ce am OBTINUT fata de ce s-a cerut. Fiecare cadere e tacuta in AudioRecord; aici devine
+        // vizibila, altfel omul afla dupa doua saptamani de teren ca a inregistrat pe 16-bit.
+        val avert = ArrayList<String>()
+        if (useFloat && !rec.isFloatFormat) avert.add("16-bit în loc de float")
+        if (useFlac && (f == null || f.extension != "flac")) avert.add("WAV în loc de FLAC")
+        if (mic != null) {
+            val rutat = rec.routedDevice()
+            if (rutat != null && rutat.id != mic.id) avert.add("${micLabelFor(rutat)} în loc de ${micLabelFor(mic)}")
+        }
+        LiveState.formatWarning = if (avert.isEmpty()) "" else "⚠ " + avert.joinToString(" · ")
         logAudioDevice()
     }
 
@@ -317,7 +327,8 @@ class RecordingService : Service() {
             ?: am.getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull { !it.isSink }
         val label = micLabelFor(dev)
         LiveState.micLabel = label
-        updateNotification("🔴 Audio + GPS · $label · 48kHz")
+        updateNotification("🔴 Audio + GPS · $label · 48kHz" +
+            (if (LiveState.formatWarning.isNotBlank()) " · ${LiveState.formatWarning}" else ""))
     }
 
     /** Indicator in notificare: cronometru + nivel + alerta TACERE (microfon mort/gol). Foloseste LiveState. */

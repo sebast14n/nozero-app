@@ -18,10 +18,14 @@ object LiveState {
     @Volatile var segmentCount = 0        // cate segmente s-au pornit in sesiune
     @Volatile var sessionStartMs = 0L
     @Volatile var statusHint = ""         // ex "In afara ferestrei — astept apusul"
+    // Ce s-a OBTINUT altfel decat s-a cerut la pornirea segmentului (format 16-bit in loc de
+    // float, WAV in loc de FLAC, alt microfon). Gol = totul ca in setari. Aratat in Monitor
+    // si in notificare — o inregistrare in alt format e o surpriza pe care omul trebuie s-o vada.
+    @Volatile var formatWarning = ""
 
     fun reset() {
         active = false; recordingNow = false; level = 0f; lastAudioMs = 0L
         micLabel = "—"; mode = ""; scheduled = false; segmentCount = 0
-        sessionStartMs = 0L; statusHint = ""
+        sessionStartMs = 0L; statusHint = ""; formatWarning = ""
     }
 }
